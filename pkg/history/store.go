@@ -10,10 +10,13 @@ type DB struct {
 }
 
 func Open(dbPath string) (*DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?cache=shared")
+	db, err := sql.Open("sqlite3", dbPath+"?cache=shared&_busy_timeout=5000")
 	if err != nil {
 		return nil, err
 	}
+	// 设置连接池，避免并发问题
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
 	return &DB{db: db}, nil
 }
 
@@ -57,16 +60,23 @@ func GetAll(d *DB) ([]HistoryStock, error) {
 		s.AnalyzedAt = time.Unix(analyzedAt, 0)
 		stocks = append(stocks, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return stocks, nil
 }
 
 func Upsert(d *DB, stock HistoryStock) error {
-	_, err := d.db.Exec(`
+	res, err := d.db.Exec(`
 		INSERT INTO history_stocks (code, analyzed_at)
 		VALUES (?, ?)
 		ON CONFLICT(code) DO UPDATE SET
 			analyzed_at = excluded.analyzed_at
 	`, stock.Code, stock.AnalyzedAt.Unix())
+	if err != nil {
+		return err
+	}
+	_, err = res.RowsAffected()
 	return err
 }
 

@@ -58,6 +58,9 @@ func main() {
 	cfg := config.Get()
 
 	var err error
+	if err = config.EnsureHomeDir(); err != nil {
+		log.Printf("创建缓存目录失败: %v", err)
+	}
 	db, err = history.Open(config.DBPath())
 	if err != nil {
 		log.Printf("打开数据库失败: %v", err)
@@ -1312,12 +1315,13 @@ func prevDate(dateStr string) string {
 
 func handleHistoryGet(c *gin.Context) {
 	if db == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库未初始化"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "数据库未初始化，请检查服务配置"})
 		return
 	}
 	stocks, err := history.GetAll(db)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("[history] GetAll failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("查询失败: %v", err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": stocks})
@@ -1325,20 +1329,19 @@ func handleHistoryGet(c *gin.Context) {
 
 func handleHistoryPost(c *gin.Context) {
 	if db == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库未初始化"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "数据库未初始化，请检查服务配置"})
 		return
 	}
 	var stock history.HistoryStock
 	if err := c.ShouldBindJSON(&stock); err != nil {
-		log.Printf("history bind error: %v", err)
+		log.Printf("[history] bind error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("history add: %+v", stock)
 	stock.AnalyzedAt = time.Now()
 	if err := history.Upsert(db, stock); err != nil {
-		log.Printf("history upsert error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("[history] upsert error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("保存失败: %v", err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
@@ -1346,12 +1349,13 @@ func handleHistoryPost(c *gin.Context) {
 
 func handleHistoryDelete(c *gin.Context) {
 	if db == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库未初始化"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "数据库未初始化，请检查服务配置"})
 		return
 	}
 	code := c.Param("code")
 	if err := history.Delete(db, code); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("[history] delete error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除失败: %v", err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
