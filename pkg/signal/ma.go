@@ -35,37 +35,71 @@ func detectMASignals(code string, klines []ta.KlineInput, ma map[string][]float6
 		}
 	}
 
-	ma5 := ma["5"]
-	ma10 := ma["10"]
-	ma20 := ma["20"]
-	if ma5 == nil || ma10 == nil || ma20 == nil {
-		return signals
+	makeMA := func(maMap map[string][]float64) (isBull, isBear bool, details string, strength float64) {
+		ma5 := maMap["5"]
+		ma10 := maMap["10"]
+		ma20 := maMap["20"]
+		ma60 := maMap["60"]
+
+		if ma5 == nil || ma10 == nil || ma20 == nil {
+			return
+		}
+
+		idx := len(ma5) - 1
+		if ma5[idx] == 0 || ma10[idx] == 0 || ma20[idx] == 0 {
+			return
+		}
+
+		isBull = ma5[idx] > ma10[idx] && ma10[idx] > ma20[idx]
+		if isBull && ma60 != nil && len(ma60) > idx && ma60[idx] > 0 {
+			isBull = isBull && ma20[idx] > ma60[idx]
+		}
+
+		isBear = ma5[idx] < ma10[idx] && ma10[idx] < ma20[idx]
+		if isBear && ma60 != nil && len(ma60) > idx && ma60[idx] > 0 {
+			isBear = isBear && ma20[idx] < ma60[idx]
+		}
+
+		if isBull {
+			details = fmt.Sprintf("MA5(%.2f) > MA10(%.2f) > MA20(%.2f)", ma5[idx], ma10[idx], ma20[idx])
+			if ma60 != nil && len(ma60) > idx && ma60[idx] > 0 {
+				details += fmt.Sprintf(" > MA60(%.2f)", ma60[idx])
+			}
+			strength = (ma5[idx] - ma20[idx]) / ma20[idx]
+		}
+		if isBear {
+			details = fmt.Sprintf("MA5(%.2f) < MA10(%.2f) < MA20(%.2f)", ma5[idx], ma10[idx], ma20[idx])
+			if ma60 != nil && len(ma60) > idx && ma60[idx] > 0 {
+				details += fmt.Sprintf(" < MA60(%.2f)", ma60[idx])
+			}
+			strength = (ma20[idx] - ma5[idx]) / ma20[idx]
+		}
+		return
 	}
-	n := min(len(ma5), min(len(ma10), len(ma20)))
-	for i := 0; i < n; i++ {
-		if ma5[i] == 0 || ma10[i] == 0 || ma20[i] == 0 {
-			continue
-		}
-		if ma5[i] > ma10[i] && ma10[i] > ma20[i] {
-			signals = append(signals, Signal{
-				Code:      code,
-				Date:      klines[i].Time,
-				Type:      SignalBullAlign,
-				Indicator: "MA",
-				Details:   fmt.Sprintf("MA5(%.2f) > MA10(%.2f) > MA20(%.2f)", ma5[i], ma10[i], ma20[i]),
-				Strength:  (ma5[i] - ma20[i]) / ma20[i],
-			})
-		}
-		if ma5[i] < ma10[i] && ma10[i] < ma20[i] {
-			signals = append(signals, Signal{
-				Code:      code,
-				Date:      klines[i].Time,
-				Type:      SignalBearAlign,
-				Indicator: "MA",
-				Details:   fmt.Sprintf("MA5(%.2f) < MA10(%.2f) < MA20(%.2f)", ma5[i], ma10[i], ma20[i]),
-				Strength:  (ma20[i] - ma5[i]) / ma20[i],
-			})
-		}
+
+	isBull, isBear, details, strength := makeMA(ma)
+	lastIdx := len(klines) - 1
+
+	if isBull {
+		signals = append(signals, Signal{
+			Code:      code,
+			Date:      klines[lastIdx].Time,
+			Type:      SignalBullAlign,
+			Indicator: "MA",
+			Details:   details,
+			Strength:  strength,
+		})
 	}
+	if isBear {
+		signals = append(signals, Signal{
+			Code:      code,
+			Date:      klines[lastIdx].Time,
+			Type:      SignalBearAlign,
+			Indicator: "MA",
+			Details:   details,
+			Strength:  strength,
+		})
+	}
+
 	return signals
 }
