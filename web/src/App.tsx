@@ -1,80 +1,23 @@
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { TrendingUp, LayoutDashboard, Search, Settings, BarChart3 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
 import Dashboard from './pages/Dashboard';
 import StockDetail from './pages/stock/StockDetail';
 import StockChoose from './pages/stock/StockChoose';
 import Screen from './pages/Screen';
 import SettingsPage from './pages/settings/SettingsPage';
-import { api } from './api/client';
-import type { CodeItem } from './types/api';
+import StockSearchInput from './components/StockSearchInput';
 
 function SearchBar() {
-  const [query, setQuery] = useState('');
-  const [codes, setCodes] = useState<CodeItem[]>([]);
-  const [results, setResults] = useState<CodeItem[]>([]);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    Promise.all([
-      api.codes('sz').catch(() => []),
-      api.codes('sh').catch(() => []),
-    ]).then(([sz, sh]) => setCodes([...sz, ...sh]));
-  }, []);
-
-  useEffect(() => {
-    if (query.length < 1) { setResults([]); return; }
-    const q = query.toLowerCase();
-    setResults(codes.filter(c =>
-      c.Code.includes(q) || c.Name.toLowerCase().includes(q)
-    ).slice(0, 10));
-  }, [query, codes]);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, []);
-
-  const go = (code: string) => {
-    setQuery('');
-    setOpen(false);
-    navigate(`/stock/${code}`);
-  };
-
   return (
-    <div ref={ref} className="relative">
-      <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 focus-within:border-blue-500">
-        <Search size={16} className="ml-3 text-slate-500" />
-        <input
-          type="text"
-          value={query}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={e => { if (e.key === 'Enter' && results.length > 0) go(results[0].Code); }}
-          placeholder="输入代码或名称搜索..."
-          className="bg-transparent px-3 py-2 text-white text-sm w-64 focus:outline-none"
-        />
-      </div>
-      {open && results.length > 0 && (
-        <div className="absolute top-full mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 max-h-64 overflow-auto">
-          {results.map(c => (
-            <button
-              key={c.Code}
-              onClick={() => go(c.Code)}
-              className="w-full text-left px-4 py-2 hover:bg-slate-700 flex justify-between text-sm"
-            >
-              <span className="text-blue-400 font-mono">{c.Code}</span>
-              <span className="text-slate-300">{c.Name}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <StockSearchInput
+      placeholder="输入代码、名称或拼音..."
+      limit={8}
+      inputClassName="w-64 px-3 py-2 text-sm"
+      panelClassName="mt-1"
+      onSelect={match => navigate(`/stock/${match.code}`)}
+    />
   );
 }
 

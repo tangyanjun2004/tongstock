@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	pinyin "github.com/mozillazg/go-pinyin"
 	"github.com/sjzsdu/tongstock/pkg/config"
 	"github.com/sjzsdu/tongstock/pkg/history"
 	"github.com/sjzsdu/tongstock/pkg/param"
@@ -27,6 +28,281 @@ import (
 var svc *tdx.Service
 var tdxMu sync.Mutex
 var db *history.DB
+
+const (
+	stockSearchDefaultLimit = 10
+	stockSearchMaxLimit     = 20
+	stockSearchIndexTTL     = 10 * time.Minute
+)
+
+type stockSearchMatch struct {
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	Exchange  string `json:"exchange"`
+	MatchType string `json:"matchType"`
+}
+
+type stockSearchResponse struct {
+	Query    string             `json:"query"`
+	Total    int                `json:"total"`
+	Exact    bool               `json:"exact"`
+	Resolved bool               `json:"resolved"`
+	Matches  []stockSearchMatch `json:"matches"`
+}
+
+type stockSearchErrorResponse struct {
+	Error   string             `json:"error"`
+	Query   string             `json:"query"`
+	Total   int                `json:"total"`
+	Matches []stockSearchMatch `json:"matches"`
+}
+
+type stockSearchIndexItem struct {
+	Code       string
+	Name       string
+	Exchange   string
+	NameNorm   string
+	PinyinNorm string
+	Initials   string
+}
+
+type scoredStockMatch struct {
+	stockSearchMatch
+	Score int
+}
+
+var stockSearchIndexCache struct {
+	sync.RWMutex
+	builtAt time.Time
+	items   []stockSearchIndexItem
+}
+
+func handleStockSearch(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("query"))
+	if query == "" {
+		query = strings.TrimSpace(c.Query("q"))
+	}
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 query 参数"})
+		return
+	}
+
+	limit := stockSearchDefaultLimit
+	if raw := c.Query("limit"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > stockSearchMaxLimit {
+		limit = stockSearchMaxLimit
+	}
+
+	matches, resolved, exact, err := searchStockMatches(query, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, stockSearchResponse{Query: query, Total: len(matches), Exact: exact, Resolved: resolved, Matches: matches})
+}
+
+func resolveStockCodeOrRespond(c *gin.Context, raw string) (string, bool) {
+	query := strings.TrimSpace(raw)
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+		return "", false
+	}
+
+	matches, resolved, _, err := searchStockMatches(query, stockSearchDefaultLimit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return "", false
+	}
+	if len(matches) == 0 {
+		c.JSON(http.StatusNotFound, stockSearchErrorResponse{Error: "未找到匹配股票", Query: query, Total: 0, Matches: []stockSearchMatch{}})
+		return "", false
+	}
+	if !resolved {
+		c.JSON(http.StatusConflict, stockSearchErrorResponse{Error: "找到多个匹配股票，请先选择具体个股", Query: query, Total: len(matches), Matches: matches})
+		return "", false
+	}
+	return matches[0].Code, true
+}
+
+func searchStockMatches(query string, limit int) ([]stockSearchMatch, bool, bool, error) {
+	if limit <= 0 {
+		limit = stockSearchDefaultLimit
+	}
+	if limit > stockSearchMaxLimit {
+		limit = stockSearchMaxLimit
+	}
+
+	items, err := getStockSearchIndex()
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	normalizedQuery := normalizeStockSearchText(query)
+	normalizedCode := normalizeStockCodeQuery(query)
+	if normalizedQuery == "" && normalizedCode == "" {
+		return []stockSearchMatch{}, false, false, nil
+	}
+
+	matches := make([]scoredStockMatch, 0, limit)
+	for _, item := range items {
+		score, matchType, ok := scoreStockMatch(item, normalizedQuery, normalizedCode)
+		if !ok {
+			continue
+		}
+		matches = append(matches, scoredStockMatch{stockSearchMatch: stockSearchMatch{Code: item.Code, Name: item.Name, Exchange: item.Exchange, MatchType: matchType}, Score: score})
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
+		if matches[i].Code != matches[j].Code {
+			return matches[i].Code < matches[j].Code
+		}
+		return matches[i].Name < matches[j].Name
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	result := make([]stockSearchMatch, len(matches))
+	for i, match := range matches {
+		result[i] = match.stockSearchMatch
+	}
+	exact := len(result) == 1 && strings.HasPrefix(result[0].MatchType, "exact_")
+	resolved := len(result) == 1
+	return result, resolved, exact, nil
+}
+
+func scoreStockMatch(item stockSearchIndexItem, normalizedQuery, normalizedCode string) (int, string, bool) {
+	if normalizedCode != "" {
+		switch {
+		case item.Code == normalizedCode:
+			return 1000, "exact_code", true
+		case strings.HasPrefix(item.Code, normalizedCode):
+			return 900, "prefix_code", true
+		case strings.Contains(item.Code, normalizedCode):
+			return 760, "contains_code", true
+		}
+	}
+	if normalizedQuery == "" {
+		return 0, "", false
+	}
+	if item.NameNorm == normalizedQuery {
+		return 980, "exact_name", true
+	}
+	if item.PinyinNorm == normalizedQuery {
+		return 970, "exact_pinyin", true
+	}
+	if item.Initials == normalizedQuery {
+		return 960, "exact_initials", true
+	}
+	if strings.HasPrefix(item.NameNorm, normalizedQuery) {
+		return 880, "prefix_name", true
+	}
+	if strings.HasPrefix(item.PinyinNorm, normalizedQuery) {
+		return 870, "prefix_pinyin", true
+	}
+	if strings.HasPrefix(item.Initials, normalizedQuery) {
+		return 860, "prefix_initials", true
+	}
+	if strings.Contains(item.NameNorm, normalizedQuery) {
+		return 780, "contains_name", true
+	}
+	if strings.Contains(item.PinyinNorm, normalizedQuery) {
+		return 770, "contains_pinyin", true
+	}
+	if strings.Contains(item.Initials, normalizedQuery) {
+		return 765, "contains_initials", true
+	}
+	return 0, "", false
+}
+
+func getStockSearchIndex() ([]stockSearchIndexItem, error) {
+	stockSearchIndexCache.RLock()
+	if time.Since(stockSearchIndexCache.builtAt) < stockSearchIndexTTL && len(stockSearchIndexCache.items) > 0 {
+		items := stockSearchIndexCache.items
+		stockSearchIndexCache.RUnlock()
+		return items, nil
+	}
+	stockSearchIndexCache.RUnlock()
+
+	stockSearchIndexCache.Lock()
+	defer stockSearchIndexCache.Unlock()
+	if time.Since(stockSearchIndexCache.builtAt) < stockSearchIndexTTL && len(stockSearchIndexCache.items) > 0 {
+		return stockSearchIndexCache.items, nil
+	}
+
+	s, err := getService()
+	if err != nil {
+		return nil, err
+	}
+	sources := []struct {
+		exchange protocol.Exchange
+		label    string
+	}{{protocol.ExchangeSH, "上交所"}, {protocol.ExchangeSZ, "深交所"}, {protocol.ExchangeBJ, "北交所"}}
+
+	items := make([]stockSearchIndexItem, 0, 6000)
+	for _, source := range sources {
+		codes, err := s.FetchCodes(source.exchange)
+		if err != nil {
+			return nil, err
+		}
+		for _, code := range codes {
+			item := stockSearchIndexItem{Code: code.Code, Name: code.Name, Exchange: source.label}
+			item.NameNorm = normalizeStockSearchText(item.Name)
+			item.PinyinNorm, item.Initials = buildStockPinyinKeys(item.Name)
+			items = append(items, item)
+		}
+	}
+	stockSearchIndexCache.items = items
+	stockSearchIndexCache.builtAt = time.Now()
+	return items, nil
+}
+
+func buildStockPinyinKeys(name string) (string, string) {
+	baseArgs := pinyin.NewArgs()
+	baseArgs.Fallback = func(r rune, _ pinyin.Args) []string { return []string{string(r)} }
+	full := normalizeStockSearchText(strings.Join(pinyin.LazyPinyin(name, baseArgs), ""))
+
+	initialArgs := pinyin.NewArgs()
+	initialArgs.Style = pinyin.FirstLetter
+	initialArgs.Fallback = func(r rune, _ pinyin.Args) []string { return []string{string(r)} }
+	initials := normalizeStockSearchText(strings.Join(pinyin.LazyPinyin(name, initialArgs), ""))
+	return full, initials
+}
+
+func normalizeStockSearchText(input string) string {
+	input = strings.TrimSpace(strings.ToLower(input))
+	input = strings.ReplaceAll(input, " ", "")
+	input = strings.ReplaceAll(input, "-", "")
+	input = strings.ReplaceAll(input, "_", "")
+	return input
+}
+
+func normalizeStockCodeQuery(input string) string {
+	input = normalizeStockSearchText(input)
+	if len(input) == 8 {
+		prefix := input[:2]
+		if prefix == "sh" || prefix == "sz" || prefix == "bj" {
+			input = input[2:]
+		}
+	}
+	if len(input) != 6 {
+		return ""
+	}
+	for _, ch := range input {
+		if ch < '0' || ch > '9' {
+			return ""
+		}
+	}
+	return input
+}
 
 func main() {
 	port := flag.Int("port", 0, "服务端口 (默认从配置文件读取)")
@@ -74,7 +350,7 @@ func main() {
 		cfg.Server.Port = *port
 	}
 
-	client, err := tdx.DialHosts(cfg.TDX.Hosts)
+	client, err := tdx.DialHosts(cfg.TDX.Hosts, tdx.WithRedial(true))
 	if err != nil {
 		log.Printf("连接服务器失败: %v, 将在请求时重连", err)
 	} else {
@@ -100,6 +376,7 @@ func main() {
 	r.GET("/api/index", handleIndex)
 	r.GET("/api/company", handleCompany)
 	r.GET("/api/company/content", handleCompanyContent)
+	r.GET("/api/stocks/search", handleStockSearch)
 	r.GET("/api/block", handleBlock)
 	r.GET("/api/block/files", handleBlockFiles)
 	r.GET("/api/block/list", handleBlockList)
@@ -142,7 +419,7 @@ func getService() (*tdx.Service, error) {
 	if svc != nil {
 		return svc, nil
 	}
-	client, err := tdx.DialHosts(config.Get().TDX.Hosts)
+	client, err := tdx.DialHosts(config.Get().TDX.Hosts, tdx.WithRedial(true))
 	if err != nil {
 		log.Printf("[tdx] 连接失败: %v", err)
 		return nil, err
@@ -181,9 +458,8 @@ func withRetry[T any](fn func() (T, error)) (T, error) {
 }
 
 func handleQuote(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -208,13 +484,11 @@ func handleQuote(c *gin.Context) {
 }
 
 func handleKline(c *gin.Context) {
-	code := c.Query("code")
-	ktype := c.Query("type")
-
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
+	ktype := c.Query("type")
 
 	klineType := tdx.ParseKlineType(ktype)
 
@@ -264,9 +538,8 @@ func handleCodes(c *gin.Context) {
 }
 
 func handleMinute(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -311,9 +584,8 @@ func handleCount(c *gin.Context) {
 }
 
 func handleAuction(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -332,9 +604,8 @@ func handleAuction(c *gin.Context) {
 }
 
 func handleXdXr(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -353,9 +624,8 @@ func handleXdXr(c *gin.Context) {
 }
 
 func handleFinance(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -401,9 +671,8 @@ func handleIndex(c *gin.Context) {
 }
 
 func handleCompany(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -422,9 +691,8 @@ func handleCompany(c *gin.Context) {
 }
 
 func handleCompanyContent(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -818,9 +1086,8 @@ func handleBlockShow(c *gin.Context) {
 }
 
 func handleTrade(c *gin.Context) {
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
 
@@ -859,14 +1126,12 @@ func toKlineInputs(klines []*protocol.Kline) []ta.KlineInput {
 }
 
 func handleIndicator(c *gin.Context) {
-	code := c.Query("code")
-	ktype := c.DefaultQuery("type", "day")
-	daysStr := c.DefaultQuery("days", "0")
-
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
+	ktype := c.DefaultQuery("type", "day")
+	daysStr := c.DefaultQuery("days", "0")
 
 	klines, err := withRetry(func() ([]*protocol.Kline, error) {
 		s, e := getService()
@@ -883,7 +1148,7 @@ func handleIndicator(c *gin.Context) {
 
 	inputs := toKlineInputs(klines)
 	if len(inputs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无K线数据"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该股票的K线数据"})
 		return
 	}
 	_ = param.AutoInit()
@@ -1120,12 +1385,11 @@ func handleScreen(c *gin.Context) {
 }
 
 func handleSignalAnalysis(c *gin.Context) {
-	code := c.Query("code")
-	ktype := c.DefaultQuery("type", "day")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 code 参数"})
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
 		return
 	}
+	ktype := c.DefaultQuery("type", "day")
 
 	klines, err := withRetry(func() ([]*protocol.Kline, error) {
 		s, e := getService()
@@ -1139,7 +1403,7 @@ func handleSignalAnalysis(c *gin.Context) {
 		return
 	}
 	if len(klines) < 30 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "K线数据不足"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "该股票K线数据不足，暂不支持信号分析"})
 		return
 	}
 
@@ -1339,6 +1603,12 @@ func handleHistoryPost(c *gin.Context) {
 		return
 	}
 	stock.AnalyzedAt = time.Now()
+	if stock.Name == "" {
+		matches, resolved, _, err := searchStockMatches(stock.Code, 1)
+		if err == nil && resolved && len(matches) == 1 {
+			stock.Name = matches[0].Name
+		}
+	}
 	if err := history.Upsert(db, stock); err != nil {
 		log.Printf("[history] upsert error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("保存失败: %v", err)})

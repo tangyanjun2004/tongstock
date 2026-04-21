@@ -2,6 +2,7 @@ import type {
   Quote, KlineItem, IndicatorData, Finance, XdXrItem,
   CompanyCategory, MinuteItem, TradeItem, AuctionItem,
   BlockItem, CodeItem, IndexBar, ScreenResponse, SignalAnalysis,
+  StockSearchResponse,
   HistoryStock,
 } from '../types/api';
 
@@ -105,13 +106,16 @@ export const api = {
   signalAnalysis: (code: string, type = 'day') =>
     fetchJSON<SignalAnalysis>(`/api/signal-analysis?code=${code}&type=${type}`),
 
+  searchStocks: (query: string, limit = 10) =>
+    fetchJSON<StockSearchResponse>(`/api/stocks/search?query=${encodeURIComponent(query)}&limit=${limit}`),
+
   history: () =>
     fetchJSON<{ data: HistoryStock[] }>('/api/history').then(r => r.data),
 
-  historyAdd: (code: string) =>
+  historyAdd: (code: string, name?: string) =>
     fetchJSON<{ message: string }>('/api/history', {
       method: 'POST',
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, name }),
     }),
 
   historyDelete: (code: string) =>

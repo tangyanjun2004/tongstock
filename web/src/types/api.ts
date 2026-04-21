@@ -140,6 +140,21 @@ export interface CodeItem {
   Name: string;
 }
 
+export interface SearchStockMatch {
+  code: string;
+  name: string;
+  exchange: string;
+  matchType: string;
+}
+
+export interface StockSearchResponse {
+  query: string;
+  total: number;
+  exact: boolean;
+  resolved: boolean;
+  matches: SearchStockMatch[];
+}
+
 export interface IndexBar extends KlineItem {
   UpCount: number;
   DownCount: number;
@@ -203,5 +218,6 @@ export interface SignalAnalysis {
 
 export interface HistoryStock {
   code: string;
+  name?: string;
   analyzed_at: string;
 }

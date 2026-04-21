@@ -19,6 +19,22 @@ function getLastTradingDay(): string {
   
   return `${year}${month}${day}`;
 }
+
+function getDetailErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
+
+function classifyDetailStatus(error: unknown): DetailStatus {
+  const message = error instanceof Error ? error.message : '';
+  if (message.includes('未找到') || message.includes('多个匹配股票')) {
+    return 'not_found';
+  }
+  return 'no_data';
+}
+
 import { useParams, useNavigate } from 'react-router-dom';
 import { BarChart3, DollarSign, Building2, Gift, Clock, Maximize2, Minimize2 } from 'lucide-react';
 import { api } from '../../api/client';
@@ -26,10 +42,12 @@ import type { SignalAnalysis as SignalAnalysisType } from '../../types/api';
 import CandlestickChart from '../../components/charts/CandlestickChart';
 import ChartToolbar from '../../components/charts/ChartToolbar';
 import MinuteChart from '../../components/charts/MinuteChart';
+import StockSearchInput from '../../components/StockSearchInput';
 import TabContent from '../../components/TabContent';
 import { parseTdxText, renderTdxHtml } from '../../lib/tdx-parser';
 
 type Tab = 'chart' | 'finance' | 'company' | 'dividend' | 'intraday';
+type DetailStatus = 'loading' | 'ready' | 'not_found' | 'no_data';
 
 const TABS: { key: Tab; label: string; icon: any }[] = [
   { key: 'chart', label: 'K线+指标', icon: BarChart3 },
@@ -43,7 +61,6 @@ export default function StockDetail() {
   const { code: paramCode, tab: paramTab } = useParams();
   const navigate = useNavigate();
   const [code, setCode] = useState(paramCode || '');
-  const [inputCode, setInputCode] = useState(paramCode || '');
   const [tab, setTab] = useState<Tab>((paramTab as Tab) || 'chart');
   const [quote, setQuote] = useState<any>(null);
   const [klines, setKlines] = useState<any[]>([]);
@@ -63,6 +80,8 @@ export default function StockDetail() {
   const [fullscreen, setFullscreen] = useState(false);
   const tradeRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [loading, setLoading] = useState(false);
+  const [detailStatus, setDetailStatus] = useState<DetailStatus>('loading');
+  const [detailError, setDetailError] = useState('');
 
   // 如果没有股票代码，重定向到选择页面
   useEffect(() => {
@@ -71,7 +90,6 @@ export default function StockDetail() {
       return;
     }
     setCode(paramCode);
-    setInputCode(paramCode);
     if (paramTab) setTab(paramTab as Tab);
   }, [paramCode, paramTab, navigate]);
 
@@ -86,27 +104,92 @@ export default function StockDetail() {
     navigate(`/stock/${code}/${t}`, { replace: true });
   };
 
-  useEffect(() => {
-    if (!code) return;
-    setLoading(true);
-    if (tab === 'chart') {
-      api.quote(code).then(q => {
-        setQuote(q);
-        api.historyAdd(code).catch(() => {});
-      }).catch(() => {});
-    } else {
-      api.quote(code).then(setQuote).catch(() => {});
-    }
-    api.indicator(code, ktype).then(data => {
-      setIndicator(data);
-      setKlines(data?.klines || []);
-    }).catch(() => {});
-    api.signalAnalysis(code, ktype).then(setAnalysis).catch(() => {});
-    setLoading(false);
-  }, [code, ktype]);
+  const loadCompanyContent = async (catName: string) => {
+    setSelectedCat(catName);
+    try {
+      const r = await api.companyContent(code, catName);
+      setCompanyContent((r.content || '').replace(/\r/g, ''));
+    } catch { setCompanyContent('加载失败'); }
+  };
 
   useEffect(() => {
     if (!code) return;
+    let cancelled = false;
+    setLoading(true);
+    setDetailStatus('loading');
+    setDetailError('');
+    setQuote(null);
+    setIndicator(null);
+    setKlines([]);
+    setAnalysis(null);
+    setFinance(null);
+    setCompanyCats([]);
+    setCompanyContent('');
+    setSelectedCat('');
+    setDividends([]);
+    setMinuteData([]);
+    setMinuteDate('');
+
+    const loadCore = async () => {
+      const [quoteResult, indicatorResult, analysisResult] = await Promise.allSettled([
+        api.quote(code),
+        api.indicator(code, ktype),
+        api.signalAnalysis(code, ktype),
+      ]);
+
+      if (cancelled) return;
+
+      if (quoteResult.status === 'rejected') {
+        setDetailStatus('not_found');
+        setDetailError(getDetailErrorMessage(quoteResult.reason, '未找到匹配股票或行情数据'));
+        setLoading(false);
+        return;
+      }
+
+      setQuote(quoteResult.value);
+
+      if (indicatorResult.status === 'rejected') {
+        setDetailStatus(classifyDetailStatus(indicatorResult.reason));
+        setDetailError(getDetailErrorMessage(indicatorResult.reason, '该股票暂无可展示的数据'));
+        setLoading(false);
+        return;
+      }
+
+      const indicatorData = indicatorResult.value;
+      const nextKlines = indicatorData?.klines || [];
+      setIndicator(indicatorData);
+      setKlines(nextKlines);
+
+      if (nextKlines.length === 0) {
+        setDetailStatus('no_data');
+        setDetailError('该股票暂无可展示的K线数据');
+        setLoading(false);
+        return;
+      }
+
+      if (analysisResult.status === 'fulfilled') {
+        setAnalysis(analysisResult.value);
+      }
+
+      setDetailStatus('ready');
+      api.historyAdd(code, quoteResult.value.Name).catch(() => {});
+      setLoading(false);
+    };
+
+    loadCore().catch((error) => {
+      if (cancelled) return;
+      setDetailStatus(classifyDetailStatus(error));
+      setDetailError(getDetailErrorMessage(error, '加载股票详情失败'));
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code, ktype]);
+
+  useEffect(() => {
+    if (!code || detailStatus !== 'ready') return;
     if (tab === 'finance') api.finance(code).then(setFinance).catch(() => {});
     if (tab === 'company') api.company(code).then(cats => {
       setCompanyCats(cats);
@@ -144,31 +227,26 @@ export default function StockDetail() {
       const timer = setInterval(fetchMinute, 30000);
       return () => clearInterval(timer);
     }
-  }, [code, tab]);
-
-  const loadCompanyContent = async (catName: string) => {
-    setSelectedCat(catName);
-    try {
-      const r = await api.companyContent(code, catName);
-      setCompanyContent((r.content || '').replace(/\r/g, ''));
-    } catch { setCompanyContent('加载失败'); }
-  };
+  }, [code, tab, detailStatus]);
 
   const pct = quote ? ((quote.Price - quote.LastClose) / quote.LastClose * 100) : 0;
   const up = pct >= 0;
+  const showTabs = detailStatus === 'ready';
 
   return (
     <div className={`flex flex-col min-h-0 gap-4 ${fullscreen ? 'fixed inset-0 z-50 bg-slate-950 p-4 overflow-auto' : 'h-full'}`}>
       {!fullscreen && (
         <div className="flex items-center gap-4 flex-wrap">
-          <input
-            type="text" value={inputCode}
-            onChange={e => setInputCode(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && inputCode.length === 6) navigate(`/stock/${inputCode}`); }}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white w-32 font-mono focus:outline-none focus:border-blue-500"
-            placeholder="股票代码"
+          <StockSearchInput
+            key={code}
+            initialQuery={code}
+            limit={10}
+            placeholder="代码/名称/拼音"
+            containerClassName="w-52"
+            inputClassName="px-4 py-2 text-sm"
+            onSelect={match => navigate(`/stock/${match.code}/${tab}`)}
           />
-          {quote && (
+          {showTabs && quote && (
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-white font-bold text-lg">{quote.Name}</span>
               <span className={`text-2xl font-bold ${up ? 'text-red-400' : 'text-green-400'}`}>
@@ -188,6 +266,7 @@ export default function StockDetail() {
         </div>
       )}
 
+      {showTabs && (
       <div className={`flex items-center ${fullscreen ? '' : 'border-b border-slate-800'}`}>
         {!fullscreen && (
           <div className="flex gap-1 flex-1">
@@ -225,10 +304,20 @@ export default function StockDetail() {
           {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
       </div>
+      )}
 
       {loading && <div className="text-slate-500 text-center py-8">加载中...</div>}
 
-      {tab === 'chart' && klines.length > 0 && (
+      {!loading && !showTabs && (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center">
+          <div className="text-lg font-semibold text-white mb-2">
+            {detailStatus === 'not_found' ? '未找到该股票' : '该股票暂无可展示的数据'}
+          </div>
+          <div className="text-sm text-slate-400">{detailError || '请重新搜索并选择一个有效的股票。'}</div>
+        </div>
+      )}
+
+      {showTabs && tab === 'chart' && klines.length > 0 && (
         <div className="space-y-4">
           <ChartToolbar
             ktype={ktype}
