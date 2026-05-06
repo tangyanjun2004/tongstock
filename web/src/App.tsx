@@ -134,6 +134,7 @@ function buildBreadcrumbs(pathname: string) {
     screen: '信号筛选',
     settings: '配置',
     chart: 'K线+指标',
+    signal: '信号',
     finance: '财务',
     company: '公司',
     dividend: '分红',

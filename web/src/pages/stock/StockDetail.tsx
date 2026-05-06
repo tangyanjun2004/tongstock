@@ -49,7 +49,6 @@ import CandlestickChart from '../../components/charts/CandlestickChart';
 import ChartToolbar from '../../components/charts/ChartToolbar';
 import FinanceTrendChart, { type FinanceTrendChartHandle, type FinanceTrendMetric } from '../../components/charts/FinanceTrendChart';
 import MinuteChart from '../../components/charts/MinuteChart';
-import StockSearchInput from '../../components/StockSearchInput';
 import TabContent from '../../components/TabContent';
 import { formatDate, formatShortDate, formatTdxDate, formatTime } from '../../lib/datetime';
 import { parseTdxText, renderTdxHtml } from '../../lib/tdx-parser';
@@ -537,16 +536,6 @@ export default function StockDetail() {
         <Card bordered={false} style={{ background: 'linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.92))' }}>
           <Flex justify="space-between" align="flex-start" gap={16} wrap>
             <Space direction="vertical" size={14} style={{ flex: 1, minWidth: 280 }}>
-              {!fullscreen && (
-                <StockSearchInput
-                  key={code}
-                  initialQuery={code}
-                  limit={10}
-                  placeholder="代码/名称/拼音"
-                  containerClassName="stock-detail-search"
-                  onSelect={(match) => navigate(`/stock/${match.code}/${tab}`)}
-                />
-              )}
               {showTabs && quote && (
                 <Space direction="vertical" size={12} style={{ display: 'flex' }}>
                   <Space wrap size={[8, 8]}>
