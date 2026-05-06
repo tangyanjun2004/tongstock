@@ -42,17 +42,43 @@ body {
   font-weight: 600;
 }
 
-.global-stock-search .ant-select-selector,
+.global-stock-search {
+  display: flex;
+  align-items: center;
+}
+
+.global-stock-search .ant-select,
+.global-stock-search .ant-select-selector {
+  height: 32px !important;
+}
+
+.global-stock-search .ant-select-selector {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 .global-stock-search .ant-input-affix-wrapper {
-  min-height: 32px;
   height: 32px;
+  min-height: 32px;
+  padding: 0 11px;
+  align-items: center;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: none;
 }
 
-.global-stock-search .ant-input-affix-wrapper {
-  padding-block: 3px;
+.global-stock-search .ant-input-affix-wrapper:hover,
+.global-stock-search .ant-input-affix-wrapper:focus,
+.global-stock-search .ant-input-affix-wrapper-focused {
+  border-color: #475569;
+  box-shadow: none;
 }
 
-.global-stock-search .ant-input {
+.global-stock-search .ant-input,
+.global-stock-search .ant-input::placeholder {
   font-size: 13px;
 }
 
