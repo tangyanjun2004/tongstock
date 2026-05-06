@@ -42,6 +42,20 @@ body {
   font-weight: 600;
 }
 
+.global-stock-search .ant-select-selector,
+.global-stock-search .ant-input-affix-wrapper {
+  min-height: 32px;
+  height: 32px;
+}
+
+.global-stock-search .ant-input-affix-wrapper {
+  padding-block: 3px;
+}
+
+.global-stock-search .ant-input {
+  font-size: 13px;
+}
+
 .price-up {
   color: #ef4444;
 }

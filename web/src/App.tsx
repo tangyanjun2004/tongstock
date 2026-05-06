@@ -21,6 +21,7 @@ function GlobalSearch() {
       <StockSearchInput
         placeholder="输入代码、名称或拼音..."
         limit={8}
+        containerClassName="global-stock-search"
         onSelect={(match) => navigate(`/stock/${match.code}`)}
       />
     </div>
