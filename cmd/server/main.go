@@ -1753,13 +1753,21 @@ func fetchCompanyBlockContent(code, block string) (string, error) {
 }
 
 func parseMainFinanceMetricTables(content string) []financeMetricTable {
+	return parseFinanceMetricTablesInSection(content, "【1.主要财务指标】", "【2.", []string{"年度对比", "最新季度"}, 2)
+}
+
+func parseProfitabilityFinanceMetricTables(content string) []financeMetricTable {
+	return parseFinanceMetricTablesInSection(content, "【4.盈利能力指标】", "【5.", []string{"盈利年度对比", "盈利最新季度"}, 2)
+}
+
+func parseFinanceMetricTablesInSection(content, sectionTitle, nextSectionPrefix string, titles []string, maxTables int) []financeMetricTable {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
 	lines := strings.Split(strings.ReplaceAll(content, "\r", ""), "\n")
 	start := -1
 	for i, line := range lines {
-		if strings.Contains(strings.TrimSpace(line), "【1.主要财务指标】") {
+		if strings.HasPrefix(strings.TrimSpace(line), sectionTitle) {
 			start = i + 1
 			break
 		}
@@ -1767,24 +1775,31 @@ func parseMainFinanceMetricTables(content string) []financeMetricTable {
 	if start < 0 {
 		return nil
 	}
-	tables := make([]financeMetricTable, 0, 2)
-	for i := start; i < len(lines) && len(tables) < 2; i++ {
+	tables := make([]financeMetricTable, 0, maxTables)
+	for i := start; i < len(lines) && (maxTables <= 0 || len(tables) < maxTables); i++ {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "【2.") {
+		if strings.HasPrefix(line, nextSectionPrefix) {
 			break
 		}
 		if !strings.HasPrefix(line, "┌") {
 			continue
 		}
 		rows := extractBoxTableRows(lines[i:])
-		if table := buildFinanceMetricTable(rows, len(tables)); len(table.Periods) > 0 && len(table.Rows) > 0 {
+		if table := buildFinanceMetricTable(rows, titleAt(titles, len(tables))); len(table.Periods) > 0 && len(table.Rows) > 0 {
 			tables = append(tables, table)
 		}
 	}
 	return tables
 }
 
-func buildFinanceMetricTable(rows [][]string, index int) financeMetricTable {
+func titleAt(titles []string, index int) string {
+	if index >= 0 && index < len(titles) && titles[index] != "" {
+		return titles[index]
+	}
+	return "财务指标"
+}
+
+func buildFinanceMetricTable(rows [][]string, title string) financeMetricTable {
 	if len(rows) < 2 || len(rows[0]) < 2 {
 		return financeMetricTable{}
 	}
@@ -1797,12 +1812,6 @@ func buildFinanceMetricTable(rows [][]string, index int) financeMetricTable {
 	}
 	if len(periods) == 0 {
 		return financeMetricTable{}
-	}
-	title := "主要财务指标"
-	if index == 0 {
-		title = "年度对比"
-	} else if index == 1 {
-		title = "最新季度"
 	}
 	result := financeMetricTable{Title: title, Periods: periods, Rows: make([]financeMetricRow, 0, len(rows)-1)}
 	for _, row := range mergeWrappedFinanceMetricRows(rows[1:]) {
@@ -1861,6 +1870,11 @@ func parseFinanceTrendRecords(content, mode string) ([]financeTrendRecord, []str
 		}
 		if idx < len(mainTables) {
 			if records, metrics := financeTrendRecordsFromMetricTable(mainTables[idx]); len(records) > 0 {
+				profitTables := parseProfitabilityFinanceMetricTables(content)
+				if idx < len(profitTables) {
+					supplementalRecords, supplementalMetrics := financeTrendRecordsFromMetricTable(profitTables[idx])
+					records, metrics = mergeFinanceTrendRecordsByPeriod(records, supplementalRecords, metrics, supplementalMetrics)
+				}
 				return records, metrics
 			}
 		}
@@ -1922,6 +1936,64 @@ func financeTrendRecordsFromMetricTable(table financeMetricTable) ([]financeTren
 	records = pruneEmptyFinanceRecords(records)
 	sort.Slice(records, func(i, j int) bool { return records[i].Period < records[j].Period })
 	return records, metrics
+}
+
+func mergeFinanceTrendRecordsByPeriod(base, supplemental []financeTrendRecord, baseMetrics, supplementalMetrics []string) ([]financeTrendRecord, []string) {
+	if len(base) == 0 {
+		return supplemental, supplementalMetrics
+	}
+	supplementalByPeriod := make(map[string]financeTrendRecord, len(supplemental))
+	for _, record := range supplemental {
+		supplementalByPeriod[record.Period] = record
+	}
+	merged := append([]financeTrendRecord(nil), base...)
+	for i := range merged {
+		other, ok := supplementalByPeriod[merged[i].Period]
+		if !ok {
+			continue
+		}
+		fillMissingFinanceTrendFields(&merged[i], other)
+	}
+	return merged, mergeMetricKeys(baseMetrics, supplementalMetrics)
+}
+
+func fillMissingFinanceTrendFields(dst *financeTrendRecord, src financeTrendRecord) {
+	if dst.Revenue == nil {
+		dst.Revenue = src.Revenue
+	}
+	if dst.NetProfit == nil {
+		dst.NetProfit = src.NetProfit
+	}
+	if dst.GrossMargin == nil {
+		dst.GrossMargin = src.GrossMargin
+	}
+	if dst.NetMargin == nil {
+		dst.NetMargin = src.NetMargin
+	}
+	if dst.ROE == nil {
+		dst.ROE = src.ROE
+	}
+	if dst.EPS == nil {
+		dst.EPS = src.EPS
+	}
+	if dst.OperatingCashPS == nil {
+		dst.OperatingCashPS = src.OperatingCashPS
+	}
+}
+
+func mergeMetricKeys(groups ...[]string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	for _, group := range groups {
+		for _, metric := range group {
+			if _, ok := seen[metric]; ok {
+				continue
+			}
+			seen[metric] = struct{}{}
+			result = append(result, metric)
+		}
+	}
+	return result
 }
 
 func parseQuarterFinanceTable(lines []string) ([]financeTrendRecord, []string) {
@@ -2092,11 +2164,11 @@ func assignFinanceMetricValues(records []financeTrendRecord, name string, values
 		switch {
 		case !isGrowthRate && (strings.Contains(name, "营业收入") || strings.Contains(name, "营业总收") || strings.Contains(name, "总营收")):
 			records[i].Revenue = v
-		case !isGrowthRate && (strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "归母净利") || strings.Contains(name, "净利润")):
+		case isNetProfitMetricName(name):
 			records[i].NetProfit = v
 		case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
 			records[i].GrossMargin = v
-		case strings.Contains(name, "净利润率") || strings.Contains(name, "净利率"):
+		case strings.Contains(name, "销售净利率") || strings.Contains(name, "净利润率"):
 			records[i].NetMargin = v
 		case strings.Contains(name, "加权净资产收益率") || strings.Contains(name, "净资产收益率"):
 			records[i].ROE = v
@@ -2113,11 +2185,11 @@ func financeMetricKeysForName(name string) []string {
 	switch {
 	case !isGrowthRate && (strings.Contains(name, "营业收入") || strings.Contains(name, "营业总收") || strings.Contains(name, "总营收")):
 		return []string{"revenue"}
-	case !isGrowthRate && (strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "归母净利") || strings.Contains(name, "净利润")):
+	case isNetProfitMetricName(name):
 		return []string{"netProfit"}
 	case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
 		return []string{"grossMargin"}
-	case strings.Contains(name, "净利润率") || strings.Contains(name, "净利率"):
+	case strings.Contains(name, "销售净利率") || strings.Contains(name, "净利润率"):
 		return []string{"netMargin"}
 	case strings.Contains(name, "加权净资产收益率") || strings.Contains(name, "净资产收益率"):
 		return []string{"roe"}
@@ -2128,6 +2200,13 @@ func financeMetricKeysForName(name string) []string {
 	default:
 		return nil
 	}
+}
+
+func isNetProfitMetricName(name string) bool {
+	if strings.Contains(name, "增长率") || strings.Contains(name, "现金含量") || strings.Contains(name, "净利率") || strings.Contains(name, "净资产") || strings.Contains(name, "总资产") {
+		return false
+	}
+	return strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "归母净利") || strings.HasPrefix(name, "净利润")
 }
 
 func aggregateQuarterFinanceRecords(records []financeTrendRecord) []financeTrendRecord {
