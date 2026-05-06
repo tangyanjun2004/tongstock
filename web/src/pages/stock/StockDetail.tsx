@@ -3,10 +3,13 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   AreaChartOutlined,
   BankOutlined,
+  BarChartOutlined,
+  CameraOutlined,
   ClockCircleOutlined,
   CompressOutlined,
   DollarOutlined,
   ExpandOutlined,
+  FileExcelOutlined,
   GiftOutlined,
   InfoCircleOutlined,
   LineChartOutlined,
@@ -15,13 +18,17 @@ import {
 import {
   Button,
   Card,
+  Checkbox,
   Col,
   Descriptions,
   Empty,
   Flex,
   List,
+  message,
+  Radio,
   Progress,
   Row,
+  Segmented,
   Space,
   Spin,
   Statistic,
@@ -32,9 +39,16 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../../api/client';
-import type { MinuteItem, Signal, SignalAnalysis as SignalAnalysisType, XdXrItem } from '../../types/api';
+import type {
+  FinanceTrendsResponse,
+  MinuteItem,
+  Signal,
+  SignalAnalysis as SignalAnalysisType,
+  XdXrItem,
+} from '../../types/api';
 import CandlestickChart from '../../components/charts/CandlestickChart';
 import ChartToolbar from '../../components/charts/ChartToolbar';
+import FinanceTrendChart, { type FinanceTrendChartHandle, type FinanceTrendMetric } from '../../components/charts/FinanceTrendChart';
 import MinuteChart from '../../components/charts/MinuteChart';
 import StockSearchInput from '../../components/StockSearchInput';
 import TabContent from '../../components/TabContent';
@@ -42,6 +56,8 @@ import { parseTdxText, renderTdxHtml } from '../../lib/tdx-parser';
 
 type Tab = 'chart' | 'finance' | 'company' | 'dividend' | 'intraday';
 type DetailStatus = 'loading' | 'ready' | 'not_found' | 'no_data';
+type FinanceCompareMode = 'raw' | 'yoy' | 'qoq';
+type FinanceViewMode = 'chart' | 'table';
 
 const TAB_ITEMS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'chart', label: 'K线+指标', icon: <AreaChartOutlined /> },
@@ -88,6 +104,99 @@ function formatSigned(value: number, suffix = '') {
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}${suffix}`;
 }
 
+const FINANCE_METRICS: FinanceTrendMetric[] = [
+  { key: 'revenue', label: '营业收入', color: '#3b82f6', axis: 'amount' },
+  { key: 'netProfit', label: '净利润', color: '#22c55e', axis: 'amount' },
+  { key: 'grossMargin', label: '销售毛利率', color: '#f59e0b', axis: 'percent' },
+  { key: 'netMargin', label: '净利润率', color: '#ef4444', axis: 'percent' },
+  { key: 'roe', label: '净资产收益率', color: '#8b5cf6', axis: 'percent' },
+  { key: 'eps', label: '每股收益', color: '#ec4899', axis: 'perShare' },
+  { key: 'operatingCashPerShare', label: '每股经营现金流', color: '#14b8a6', axis: 'perShare' },
+];
+
+const FINANCE_CHART_GROUPS = [
+  {
+    key: 'amount',
+    title: '规模趋势',
+    description: '收入、利润与每股指标',
+    axes: ['amount', 'perShare'] as FinanceTrendMetric['axis'][],
+  },
+  {
+    key: 'margin',
+    title: '利润率趋势',
+    description: '毛利率、净利率与 ROE',
+    axes: ['percent'] as FinanceTrendMetric['axis'][],
+  },
+] as const;
+
+function formatFinanceMetricValue(value: number | undefined, metric: FinanceTrendMetric) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  if (metric.axis === 'percent') return `${value.toFixed(2)}%`;
+  if (metric.axis === 'perShare') return `${value.toFixed(2)}元`;
+  if (Math.abs(value) >= 100000000) return `${(value / 100000000).toFixed(2)}亿`;
+  if (Math.abs(value) >= 10000) return `${(value / 10000).toFixed(2)}万`;
+  return value.toFixed(2);
+}
+
+function calcFinanceCompareValue(records: FinanceTrendsResponse['records'], index: number, metricKey: FinanceTrendMetric['key'], mode: FinanceCompareMode) {
+  const current = records[index]?.[metricKey];
+  if (typeof current !== 'number' || Number.isNaN(current)) return undefined;
+  if (mode === 'raw') return current;
+
+  const offset = mode === 'yoy' ? 4 : 1;
+  const previous = records[index - offset]?.[metricKey];
+  if (typeof previous !== 'number' || Number.isNaN(previous) || previous === 0) return undefined;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+function buildFinanceComparisonRecords(
+  records: FinanceTrendsResponse['records'],
+  metrics: FinanceTrendMetric[],
+  mode: FinanceCompareMode,
+): FinanceTrendsResponse['records'] {
+  if (mode === 'raw') return records;
+  return records
+    .map((record, index) => {
+      const next: FinanceTrendsResponse['records'][number] = { ...record };
+      let hasValue = false;
+      metrics.forEach((metric) => {
+        const value = calcFinanceCompareValue(records, index, metric.key, mode);
+        if (typeof value === 'number' && !Number.isNaN(value)) {
+          next[metric.key] = value;
+          hasValue = true;
+        } else {
+          delete next[metric.key];
+        }
+      });
+      return hasValue ? next : null;
+    })
+    .filter((record): record is FinanceTrendsResponse['records'][number] => record !== null);
+}
+
+function exportCsv(filename: string, headers: string[], rows: string[][]) {
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function downloadDataUrl(filename: string, dataUrl: string) {
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export default function StockDetail() {
   const { code: paramCode, tab: paramTab } = useParams();
   const navigate = useNavigate();
@@ -100,6 +209,12 @@ export default function StockDetail() {
   const [mainOverlay, setMainOverlay] = useState('MA');
   const [subPanel, setSubPanel] = useState('MACD');
   const [finance, setFinance] = useState<any>(null);
+  const [financeTrends, setFinanceTrends] = useState<FinanceTrendsResponse | null>(null);
+  const [financeTrendMode, setFinanceTrendMode] = useState<'quarter' | 'year'>('quarter');
+  const [financeCompareMode, setFinanceCompareMode] = useState<FinanceCompareMode>('raw');
+  const [financeViewMode, setFinanceViewMode] = useState<FinanceViewMode>('chart');
+  const [selectedFinanceMetrics, setSelectedFinanceMetrics] = useState<string[]>(['revenue', 'netProfit', 'roe']);
+  const [financeTrendLoading, setFinanceTrendLoading] = useState(false);
   const [companyCats, setCompanyCats] = useState<any[]>([]);
   const [companyContent, setCompanyContent] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
@@ -110,6 +225,8 @@ export default function StockDetail() {
   const [highlightedIdx, setHighlightedIdx] = useState(-1);
   const [fullscreen, setFullscreen] = useState(false);
   const tradeRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const amountChartRef = useRef<FinanceTrendChartHandle | null>(null);
+  const marginChartRef = useRef<FinanceTrendChartHandle | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailStatus, setDetailStatus] = useState<DetailStatus>('loading');
   const [detailError, setDetailError] = useState('');
@@ -157,6 +274,7 @@ export default function StockDetail() {
     setKlines([]);
     setAnalysis(null);
     setFinance(null);
+    setFinanceTrends(null);
     setCompanyCats([]);
     setCompanyContent('');
     setSelectedCat('');
@@ -259,6 +377,27 @@ export default function StockDetail() {
     }
   }, [code, tab, detailStatus]);
 
+  useEffect(() => {
+    if (!code || detailStatus !== 'ready' || tab !== 'finance') return;
+    let cancelled = false;
+    setFinanceTrendLoading(true);
+    api.financeTrends(code, financeTrendMode)
+      .then((data) => {
+        if (cancelled) return;
+        setFinanceTrends(data);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFinanceTrends(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFinanceTrendLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, detailStatus, tab, financeTrendMode]);
+
   const pct = quote ? ((quote.Price - quote.LastClose) / quote.LastClose) * 100 : 0;
   const up = pct >= 0;
   const showTabs = detailStatus === 'ready';
@@ -276,6 +415,48 @@ export default function StockDetail() {
     ['每股净资产', finance.MeiGuJingZiChan, '元'],
     ['股东人数', finance.GuDongRenShu, '人'],
   ] : [];
+
+  const availableFinanceMetrics = useMemo(() => {
+    const trendMetrics = new Set(financeTrends?.metrics ?? []);
+    return FINANCE_METRICS.filter((metric) => trendMetrics.has(metric.key));
+  }, [financeTrends]);
+
+  const financeChartGroups = useMemo(() => {
+    return FINANCE_CHART_GROUPS.map((group) => ({
+      ...group,
+      metrics: availableFinanceMetrics.filter((metric) => group.axes.includes(metric.axis)),
+    })).filter((group) => group.metrics.length > 0);
+  }, [availableFinanceMetrics]);
+
+  const financeDisplayRecords = useMemo(() => {
+    if (!financeTrends) return [];
+    return buildFinanceComparisonRecords(financeTrends.records, availableFinanceMetrics, financeCompareMode);
+  }, [availableFinanceMetrics, financeCompareMode, financeTrends]);
+
+  const activeFinanceMetrics = useMemo(() => {
+    const selected = availableFinanceMetrics.filter((metric) => selectedFinanceMetrics.includes(metric.key));
+    return selected.length > 0 ? selected : availableFinanceMetrics.slice(0, 3);
+  }, [availableFinanceMetrics, selectedFinanceMetrics]);
+
+  const latestFinanceRecord = financeDisplayRecords[financeDisplayRecords.length - 1];
+
+  const financeTableColumns: ColumnsType<FinanceTrendsResponse['records'][number]> = useMemo(() => [
+    {
+      title: financeTrendMode === 'year' ? '年度' : '期间',
+      dataIndex: 'label',
+      fixed: 'left',
+      width: 120,
+    },
+    ...activeFinanceMetrics.map((metric) => ({
+      title: metric.label,
+      key: metric.key,
+      align: 'right' as const,
+      render: (_: unknown, row: FinanceTrendsResponse['records'][number]) => formatFinanceMetricValue(row[metric.key], {
+        ...metric,
+        axis: financeCompareMode === 'raw' ? metric.axis : 'percent',
+      }),
+    })),
+  ], [activeFinanceMetrics, financeCompareMode, financeTrendMode]);
 
   const dividendColumns: ColumnsType<XdXrItem> = [
     { title: '日期', dataIndex: 'Date', render: (value) => value?.slice(0, 10) },
@@ -316,6 +497,36 @@ export default function StockDetail() {
       { title: '成交量', dataIndex: 'Number', align: 'right', render: (value: number) => `${Math.abs(value).toLocaleString()}手` },
     ];
   }, [quote]);
+
+  const handleExportFinanceCsv = () => {
+    if (financeDisplayRecords.length === 0 || activeFinanceMetrics.length === 0) {
+      message.warning('暂无可导出的财务趋势数据');
+      return;
+    }
+    exportCsv(
+      `${code}-finance-${financeTrendMode}-${financeCompareMode}.csv`,
+      ['期间', ...activeFinanceMetrics.map((metric) => metric.label)],
+      financeDisplayRecords.map((record) => [
+        record.label,
+        ...activeFinanceMetrics.map((metric) => {
+          const axis = financeCompareMode === 'raw' ? metric.axis : 'percent';
+          return formatFinanceMetricValue(record[metric.key], { ...metric, axis });
+        }),
+      ]),
+    );
+    void message.success('已导出财务趋势数据 CSV');
+  };
+
+  const handleExportFinanceChart = (groupKey: 'amount' | 'margin') => {
+    const chartRef = groupKey === 'amount' ? amountChartRef.current : marginChartRef.current;
+    const image = chartRef?.exportImage();
+    if (!image) {
+      message.warning('当前图表尚未准备好，稍后再试');
+      return;
+    }
+    downloadDataUrl(`${code}-finance-${groupKey}-${financeTrendMode}-${financeCompareMode}.png`, image);
+    void message.success('已导出财务趋势图');
+  };
 
   const selectedMinute = highlightedIdx >= 0 && highlightedIdx < minuteData.length ? minuteData[highlightedIdx] : null;
 
@@ -519,15 +730,138 @@ export default function StockDetail() {
         )}
 
         {showTabs && tab === 'finance' && finance && (
-          <Card title="财务概览">
-            <Descriptions bordered column={{ xs: 1, md: 2, xl: 4 }}>
-              {financeItems.map(([label, value, unit]) => (
-                <Descriptions.Item key={String(label)} label={label}>
-                  {typeof value === 'number' ? value.toLocaleString() : value} {unit}
-                </Descriptions.Item>
-              ))}
-            </Descriptions>
-          </Card>
+          <Space direction="vertical" size={16} style={{ display: 'flex' }}>
+            <Card title="财务概览">
+              <Descriptions bordered column={{ xs: 1, md: 2, xl: 4 }}>
+                {financeItems.map(([label, value, unit]) => (
+                  <Descriptions.Item key={String(label)} label={label}>
+                    {typeof value === 'number' ? value.toLocaleString() : value} {unit}
+                  </Descriptions.Item>
+                ))}
+              </Descriptions>
+            </Card>
+
+            <Card
+              title={<Space><BarChartOutlined />财务趋势</Space>}
+              extra={
+                <Space wrap>
+                  <Radio.Group
+                    value={financeTrendMode}
+                    onChange={(event) => setFinanceTrendMode(event.target.value as 'quarter' | 'year')}
+                    optionType="button"
+                    buttonStyle="solid"
+                    options={[
+                      { label: '按季度', value: 'quarter' },
+                      { label: '按年度', value: 'year' },
+                    ]}
+                  />
+                  <Segmented<FinanceCompareMode>
+                    value={financeCompareMode}
+                    onChange={(value) => setFinanceCompareMode(value)}
+                    options={[
+                      { label: '原值', value: 'raw' },
+                      { label: '同比', value: 'yoy' },
+                      { label: '环比', value: 'qoq' },
+                    ]}
+                  />
+                  <Segmented<FinanceViewMode>
+                    value={financeViewMode}
+                    onChange={(value) => setFinanceViewMode(value)}
+                    options={[
+                      { label: '图表', value: 'chart' },
+                      { label: '表格', value: 'table' },
+                    ]}
+                  />
+                  <Button icon={<FileExcelOutlined />} onClick={handleExportFinanceCsv}>导出数据</Button>
+                  <Checkbox.Group
+                    value={selectedFinanceMetrics.filter((metric) => availableFinanceMetrics.some((item) => item.key === metric))}
+                    options={availableFinanceMetrics.map((metric) => ({ label: metric.label, value: metric.key }))}
+                    onChange={(values) => setSelectedFinanceMetrics(values as string[])}
+                  />
+                </Space>
+              }
+            >
+              {financeTrendLoading ? (
+                <Flex justify="center" align="center" style={{ minHeight: 320 }}><Spin size="large" /></Flex>
+              ) : financeTrends && activeFinanceMetrics.length > 0 ? (
+                <Space direction="vertical" size={16} style={{ display: 'flex' }}>
+                  <Row gutter={[16, 16]}>
+                    {activeFinanceMetrics.slice(0, 4).map((metric) => (
+                      <Col key={metric.key} xs={24} md={12} xl={6}>
+                        <Card size="small">
+                          <Statistic
+                            title={metric.label}
+                            value={typeof latestFinanceRecord?.[metric.key] === 'number' ? latestFinanceRecord[metric.key] : undefined}
+                            formatter={(value) => formatFinanceMetricValue(
+                              typeof value === 'number' ? value : Number(value),
+                              { ...metric, axis: financeCompareMode === 'raw' ? metric.axis : 'percent' },
+                            )}
+                            valueStyle={{ color: metric.color, fontSize: 20 }}
+                            suffix={latestFinanceRecord?.label}
+                          />
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                  {financeViewMode === 'chart' ? (
+                    <Row gutter={[16, 16]}>
+                      {financeChartGroups.map((group) => {
+                        const selectedGroupMetrics = group.metrics.filter((metric) => selectedFinanceMetrics.includes(metric.key));
+                        const chartMetrics = selectedGroupMetrics.map((metric) => ({
+                          ...metric,
+                          axis: financeCompareMode === 'raw' ? metric.axis : 'percent',
+                        }));
+                        const chartRef = group.key === 'amount' ? amountChartRef : marginChartRef;
+                        return (
+                          <Col key={group.key} xs={24}>
+                            <Card
+                              size="small"
+                              title={group.title}
+                              extra={
+                                <Space>
+                                  <Typography.Text type="secondary">{group.description}</Typography.Text>
+                                  <Button size="small" icon={<CameraOutlined />} onClick={() => handleExportFinanceChart(group.key as 'amount' | 'margin')}>
+                                    导出图片
+                                  </Button>
+                                </Space>
+                              }
+                            >
+                              {chartMetrics.length > 0 ? (
+                                <FinanceTrendChart
+                                  ref={chartRef}
+                                  records={financeDisplayRecords}
+                                  metrics={chartMetrics}
+                                  mode={financeTrendMode}
+                                />
+                              ) : (
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请至少选择一个该分组下的指标" />
+                              )}
+                            </Card>
+                          </Col>
+                        );
+                      })}
+                    </Row>
+                  ) : (
+                    <Card size="small" title="财务趋势表格">
+                      <Table
+                        size="small"
+                        rowKey={(row) => row.period}
+                        columns={financeTableColumns}
+                        dataSource={[...financeDisplayRecords].reverse()}
+                        pagination={{ pageSize: financeTrendMode === 'year' ? 10 : 12 }}
+                        scroll={{ x: 'max-content' }}
+                      />
+                    </Card>
+                  )}
+                  <Typography.Text type="secondary">
+                    数据来源于通达信 F10「财务分析」栏目，支持原值、同比、环比视角，以及图表/表格切换和导出。
+                  </Typography.Text>
+                </Space>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可绘制的财务趋势数据" />
+              )}
+            </Card>
+          </Space>
         )}
 
         {showTabs && tab === 'company' && (

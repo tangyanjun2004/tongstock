@@ -5,6 +5,7 @@ import type {
   StockSearchResponse,
   HistoryStock,
   IndicatorConfig,
+  FinanceTrendsResponse,
 } from '../types/api';
 
 const BASE = '';
@@ -57,6 +58,9 @@ export const api = {
 
   finance: (code: string) =>
     fetchJSON<Finance>(`/api/finance?code=${code}`),
+
+  financeTrends: (code: string, mode: 'quarter' | 'year' = 'quarter') =>
+    fetchJSON<FinanceTrendsResponse>(`/api/finance/trends?code=${code}&mode=${mode}`),
 
   company: (code: string) =>
     fetchJSON<CompanyCategory[]>(`/api/company?code=${code}`),

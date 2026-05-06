@@ -82,6 +82,28 @@ type indicatorCategoryPayload struct {
 	RSI  []int          `json:"rsi,omitempty" yaml:"rsi,omitempty"`
 }
 
+type financeTrendRecord struct {
+	Period          string   `json:"period"`
+	Year            int      `json:"year"`
+	Quarter         string   `json:"quarter"`
+	Label           string   `json:"label"`
+	Revenue         *float64 `json:"revenue,omitempty"`
+	NetProfit       *float64 `json:"netProfit,omitempty"`
+	GrossMargin     *float64 `json:"grossMargin,omitempty"`
+	NetMargin       *float64 `json:"netMargin,omitempty"`
+	ROE             *float64 `json:"roe,omitempty"`
+	EPS             *float64 `json:"eps,omitempty"`
+	OperatingCashPS *float64 `json:"operatingCashPerShare,omitempty"`
+}
+
+type financeTrendsResponse struct {
+	Code      string               `json:"code"`
+	Mode      string               `json:"mode"`
+	Metrics   []string             `json:"metrics"`
+	Records   []financeTrendRecord `json:"records"`
+	Available []string             `json:"available"`
+}
+
 type scoredStockMatch struct {
 	stockSearchMatch
 	Score int
@@ -389,6 +411,7 @@ func main() {
 	r.GET("/api/trade", handleTrade)
 	r.GET("/api/xdxr", handleXdXr)
 	r.GET("/api/finance", handleFinance)
+	r.GET("/api/finance/trends", handleFinanceTrends)
 	r.GET("/api/index", handleIndex)
 	r.GET("/api/company", handleCompany)
 	r.GET("/api/company/content", handleCompanyContent)
@@ -660,6 +683,38 @@ func handleFinance(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, info)
+}
+
+func handleFinanceTrends(c *gin.Context) {
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.DefaultQuery("mode", "quarter")))
+	if mode != "quarter" && mode != "year" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode 仅支持 quarter 或 year"})
+		return
+	}
+
+	content, err := fetchCompanyBlockContent(code, "财务分析")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取财务趋势数据失败: %v", err)})
+		return
+	}
+
+	records, metrics := parseFinanceTrendRecords(content, mode)
+	if len(records) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到可用于绘图的财务趋势数据"})
+		return
+	}
+
+	c.JSON(http.StatusOK, financeTrendsResponse{
+		Code:      code,
+		Mode:      mode,
+		Metrics:   metrics,
+		Records:   records,
+		Available: []string{"quarter", "year"},
+	})
 }
 
 func handleIndex(c *gin.Context) {
@@ -1594,6 +1649,387 @@ func prevDate(dateStr string) string {
 		return ""
 	}
 	return t.AddDate(0, 0, -1).Format("2006-01-02")
+}
+
+func fetchCompanyBlockContent(code, block string) (string, error) {
+	cats, err := withRetry(func() ([]*protocol.CompanyCategoryItem, error) {
+		s, e := getService()
+		if e != nil {
+			return nil, e
+		}
+		return s.FetchCompanyCategory(code)
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, cat := range cats {
+		if cat.Name != block {
+			continue
+		}
+		return withRetry(func() (string, error) {
+			s, e := getService()
+			if e != nil {
+				return "", e
+			}
+			return s.FetchCompanyContent(code, cat.Filename, cat.Start, cat.Length)
+		})
+	}
+	return "", fmt.Errorf("未找到块: %s", block)
+}
+
+func parseFinanceTrendRecords(content, mode string) ([]financeTrendRecord, []string) {
+	if strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r", ""), "\n")
+	var yearRecords []financeTrendRecord
+	var yearMetrics []string
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if !strings.Contains(line, "近五年每股收益对比") {
+			continue
+		}
+		if records, metrics := parseYearFinanceTable(lines[i+1:]); len(records) > 0 {
+			yearRecords = records
+			yearMetrics = metrics
+			break
+		}
+	}
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if !strings.Contains(line, "最新财报") {
+			continue
+		}
+		if records, metrics := parseQuarterFinanceTable(lines[i+1:]); len(records) > 0 {
+			if mode == "quarter" {
+				return records, metrics
+			}
+			if mode == "year" {
+				return mergeYearFinanceRecords(aggregateQuarterFinanceRecords(records), yearRecords, metrics, yearMetrics)
+			}
+		}
+	}
+	if mode == "year" {
+		return yearRecords, yearMetrics
+	}
+	return nil, nil
+}
+
+func parseQuarterFinanceTable(lines []string) ([]financeTrendRecord, []string) {
+	rows := extractBoxTableRows(lines)
+	if len(rows) < 3 {
+		return nil, nil
+	}
+	headers := rows[0]
+	if len(headers) < 2 {
+		return nil, nil
+	}
+	periods := make([]string, 0, len(headers)-1)
+	for _, header := range headers[1:] {
+		period := strings.TrimSpace(header)
+		if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(period) {
+			continue
+		}
+		periods = append(periods, period)
+	}
+	if len(periods) == 0 {
+		return nil, nil
+	}
+	records := make([]financeTrendRecord, len(periods))
+	for i, period := range periods {
+		records[i] = financeTrendRecord{
+			Period:  period,
+			Year:    parseYear(period),
+			Quarter: quarterLabel(period),
+			Label:   quarterLabel(period),
+		}
+	}
+	metrics := make([]string, 0, 5)
+	metricSeen := map[string]struct{}{}
+	for _, row := range mergeWrappedTableRows(rows[1:]) {
+		if len(row) < len(periods)+1 {
+			continue
+		}
+		name := sanitizeFinanceMetricName(row[0])
+		values := row[1:]
+		assignFinanceMetricValues(records, name, values)
+		for _, metric := range financeMetricKeysForName(name) {
+			if _, ok := metricSeen[metric]; ok {
+				continue
+			}
+			metricSeen[metric] = struct{}{}
+			metrics = append(metrics, metric)
+		}
+	}
+	return pruneEmptyFinanceRecords(records), metrics
+}
+
+func parseYearFinanceTable(lines []string) ([]financeTrendRecord, []string) {
+	rows := extractBoxTableRows(lines)
+	if len(rows) < 3 {
+		return nil, nil
+	}
+	headers := rows[0]
+	if len(headers) < 2 {
+		return nil, nil
+	}
+	labels := headers[1:]
+	indices := map[string]int{}
+	for idx, label := range labels {
+		indices[strings.TrimSpace(label)] = idx + 1
+	}
+	if _, ok := indices["年度"]; !ok {
+		return nil, nil
+	}
+	metrics := []string{"eps"}
+	records := make([]financeTrendRecord, 0, len(rows)-1)
+	for _, row := range rows[1:] {
+		if len(row) <= indices["年度"] {
+			continue
+		}
+		year := parseYear(strings.TrimSpace(row[0]))
+		if year == 0 {
+			continue
+		}
+		record := financeTrendRecord{
+			Period:  fmt.Sprintf("%04d-12-31", year),
+			Year:    year,
+			Quarter: "年度",
+			Label:   fmt.Sprintf("%d年度", year),
+			EPS:     parseOptionalFloat(cellAt(row, indices["年度"])),
+		}
+		records = append(records, record)
+	}
+	return records, metrics
+}
+
+func extractBoxTableRows(lines []string) [][]string {
+	rows := make([][]string, 0)
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			if len(rows) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "└") && len(rows) > 0 {
+			break
+		}
+		if !strings.HasPrefix(line, "│") {
+			if len(rows) > 0 {
+				break
+			}
+			continue
+		}
+		cells := parseBoxTableLine(line)
+		if len(cells) > 0 {
+			rows = append(rows, cells)
+		}
+	}
+	return rows
+}
+
+func parseBoxTableLine(line string) []string {
+	parts := strings.Split(line, "│")
+	cells := make([]string, 0, len(parts))
+	for i := 1; i < len(parts)-1; i++ {
+		cells = append(cells, strings.TrimSpace(parts[i]))
+	}
+	return cells
+}
+
+func mergeWrappedTableRows(rows [][]string) [][]string {
+	merged := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		first := strings.TrimSpace(row[0])
+		isContinuation := first != "" && !containsAny(first, []string{"每股", "营业", "利润", "毛利", "净利", "收益率", "净资产"})
+		if isContinuation && len(merged) > 0 {
+			prev := merged[len(merged)-1]
+			prev[0] = strings.TrimSpace(prev[0] + first)
+			merged[len(merged)-1] = prev
+			continue
+		}
+		copied := append([]string(nil), row...)
+		merged = append(merged, copied)
+	}
+	return merged
+}
+
+func sanitizeFinanceMetricName(name string) string {
+	name = strings.ReplaceAll(name, " ", "")
+	name = strings.ReplaceAll(name, "\t", "")
+	name = strings.ReplaceAll(name, "（", "(")
+	name = strings.ReplaceAll(name, "）", ")")
+	return name
+}
+
+func assignFinanceMetricValues(records []financeTrendRecord, name string, values []string) {
+	for i := range records {
+		if i >= len(values) {
+			break
+		}
+		v := parseOptionalFloat(values[i])
+		if v == nil {
+			continue
+		}
+		switch {
+		case strings.Contains(name, "营业收入"):
+			records[i].Revenue = v
+		case strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "净利润"):
+			records[i].NetProfit = v
+		case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
+			records[i].GrossMargin = v
+		case strings.Contains(name, "净利润率") || strings.Contains(name, "净利率"):
+			records[i].NetMargin = v
+		case strings.Contains(name, "加权净资产收益率") || strings.Contains(name, "净资产收益率"):
+			records[i].ROE = v
+		case strings.Contains(name, "每股收益"):
+			records[i].EPS = v
+		case strings.Contains(name, "每股经营现金流"):
+			records[i].OperatingCashPS = v
+		}
+	}
+}
+
+func financeMetricKeysForName(name string) []string {
+	switch {
+	case strings.Contains(name, "营业收入"):
+		return []string{"revenue"}
+	case strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "净利润"):
+		return []string{"netProfit"}
+	case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
+		return []string{"grossMargin"}
+	case strings.Contains(name, "净利润率") || strings.Contains(name, "净利率"):
+		return []string{"netMargin"}
+	case strings.Contains(name, "加权净资产收益率") || strings.Contains(name, "净资产收益率"):
+		return []string{"roe"}
+	case strings.Contains(name, "每股收益"):
+		return []string{"eps"}
+	case strings.Contains(name, "每股经营现金流"):
+		return []string{"operatingCashPerShare"}
+	default:
+		return nil
+	}
+}
+
+func aggregateQuarterFinanceRecords(records []financeTrendRecord) []financeTrendRecord {
+	byYear := map[int]financeTrendRecord{}
+	for _, record := range records {
+		if record.Quarter != "Q4" {
+			continue
+		}
+		record.Label = fmt.Sprintf("%d年度", record.Year)
+		record.Quarter = "年度"
+		byYear[record.Year] = record
+	}
+	years := make([]int, 0, len(byYear))
+	for year := range byYear {
+		years = append(years, year)
+	}
+	sort.Ints(years)
+	result := make([]financeTrendRecord, 0, len(years))
+	for _, year := range years {
+		result = append(result, byYear[year])
+	}
+	return result
+}
+
+func mergeYearFinanceRecords(base, fallback []financeTrendRecord, baseMetrics, fallbackMetrics []string) ([]financeTrendRecord, []string) {
+	fallbackByYear := make(map[int]financeTrendRecord, len(fallback))
+	for _, record := range fallback {
+		fallbackByYear[record.Year] = record
+	}
+	merged := make([]financeTrendRecord, 0, len(base))
+	for _, record := range base {
+		if fallbackRecord, ok := fallbackByYear[record.Year]; ok {
+			if record.EPS == nil {
+				record.EPS = fallbackRecord.EPS
+			}
+		}
+		merged = append(merged, record)
+	}
+	if len(merged) == 0 {
+		return fallback, fallbackMetrics
+	}
+	metricSeen := map[string]struct{}{}
+	metrics := make([]string, 0, len(baseMetrics)+len(fallbackMetrics))
+	for _, metric := range append(append([]string(nil), baseMetrics...), fallbackMetrics...) {
+		if _, ok := metricSeen[metric]; ok {
+			continue
+		}
+		metricSeen[metric] = struct{}{}
+		metrics = append(metrics, metric)
+	}
+	return merged, metrics
+}
+
+func pruneEmptyFinanceRecords(records []financeTrendRecord) []financeTrendRecord {
+	result := make([]financeTrendRecord, 0, len(records))
+	for _, record := range records {
+		if record.Revenue == nil && record.NetProfit == nil && record.GrossMargin == nil && record.NetMargin == nil && record.ROE == nil && record.EPS == nil && record.OperatingCashPS == nil {
+			continue
+		}
+		result = append(result, record)
+	}
+	return result
+}
+
+func parseOptionalFloat(value string) *float64 {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(value, ",", ""))
+	if trimmed == "" || trimmed == "---" || trimmed == "--" || trimmed == "-" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func parseYear(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) >= 4 {
+		parsed, err := strconv.Atoi(trimmed[:4])
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func quarterLabel(period string) string {
+	switch {
+	case strings.HasSuffix(period, "03-31"):
+		return "Q1"
+	case strings.HasSuffix(period, "06-30"):
+		return "Q2"
+	case strings.HasSuffix(period, "09-30"):
+		return "Q3"
+	case strings.HasSuffix(period, "12-31"):
+		return "Q4"
+	default:
+		return period
+	}
+}
+
+func cellAt(row []string, index int) string {
+	if index < 0 || index >= len(row) {
+		return ""
+	}
+	return row[index]
+}
+
+func containsAny(value string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func indicatorCategoryToPayload(src param.CategoryParams) indicatorCategoryPayload {

@@ -77,6 +77,28 @@ export interface Finance {
   UpdatedDate: number;
 }
 
+export interface FinanceTrendRecord {
+  period: string;
+  year: number;
+  quarter: string;
+  label: string;
+  revenue?: number;
+  netProfit?: number;
+  grossMargin?: number;
+  netMargin?: number;
+  roe?: number;
+  eps?: number;
+  operatingCashPerShare?: number;
+}
+
+export interface FinanceTrendsResponse {
+  code: string;
+  mode: 'quarter' | 'year' | string;
+  metrics: string[];
+  records: FinanceTrendRecord[];
+  available: string[];
+}
+
 export interface XdXrItem {
   Date: string;
   Category: string;
