@@ -105,6 +105,10 @@ function formatSigned(value: number, suffix = '') {
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}${suffix}`;
 }
 
+function amountWanToYi(value: number | undefined): number | undefined {
+  return typeof value === 'number' ? value / 10000 : undefined;
+}
+
 const FINANCE_METRICS: FinanceTrendMetric[] = [
   { key: 'revenue', label: '营业收入', color: '#3b82f6', axis: 'amount' },
   { key: 'netProfit', label: '净利润', color: '#22c55e', axis: 'amount' },
@@ -584,7 +588,7 @@ export default function StockDetail() {
               <Col xs={12} md={8} xl={4}><Statistic title="最高" value={quote.High} precision={2} valueStyle={{ color: '#ef4444' }} /></Col>
               <Col xs={12} md={8} xl={4}><Statistic title="最低" value={quote.Low} precision={2} valueStyle={{ color: '#22c55e' }} /></Col>
               <Col xs={12} md={8} xl={4}><Statistic title="成交量" value={quote.Volume / 10000} suffix="万" precision={0} /></Col>
-              <Col xs={12} md={8} xl={4}><Statistic title="成交额" value={quote.Amount / 10000} suffix="万" precision={0} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="成交额" value={amountWanToYi(quote.Amount)} suffix="亿" precision={2} /></Col>
             </Row>
           </Card>
         )}
