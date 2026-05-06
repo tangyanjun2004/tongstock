@@ -12,7 +12,6 @@ import {
   FileExcelOutlined,
   GiftOutlined,
   InfoCircleOutlined,
-  LineChartOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
@@ -54,13 +53,14 @@ import StockSearchInput from '../../components/StockSearchInput';
 import TabContent from '../../components/TabContent';
 import { parseTdxText, renderTdxHtml } from '../../lib/tdx-parser';
 
-type Tab = 'chart' | 'finance' | 'company' | 'dividend' | 'intraday';
+type Tab = 'chart' | 'signal' | 'finance' | 'company' | 'dividend' | 'intraday';
 type DetailStatus = 'loading' | 'ready' | 'not_found' | 'no_data';
 type FinanceCompareMode = 'raw' | 'yoy' | 'qoq';
 type FinanceViewMode = 'chart' | 'table';
 
 const TAB_ITEMS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'chart', label: 'K线+指标', icon: <AreaChartOutlined /> },
+  { key: 'signal', label: '信号', icon: <ThunderboltOutlined /> },
   { key: 'finance', label: '财务', icon: <DollarOutlined /> },
   { key: 'company', label: '公司', icon: <BankOutlined /> },
   { key: 'dividend', label: '分红', icon: <GiftOutlined /> },
@@ -579,77 +579,19 @@ export default function StockDetail() {
         </Card>
 
         {showTabs && quote && (
-          <>
+          <Card>
             <Row gutter={[16, 16]}>
-              <Col xs={24} xl={16}>
-                <Card>
-                  <Row gutter={[16, 16]}>
-                    <Col xs={12} md={8} xl={4}><Statistic title="昨收" value={quote.LastClose} precision={2} /></Col>
-                    <Col xs={12} md={8} xl={4}><Statistic title="开盘" value={quote.Open} precision={2} /></Col>
-                    <Col xs={12} md={8} xl={4}><Statistic title="最高" value={quote.High} precision={2} valueStyle={{ color: '#ef4444' }} /></Col>
-                    <Col xs={12} md={8} xl={4}><Statistic title="最低" value={quote.Low} precision={2} valueStyle={{ color: '#22c55e' }} /></Col>
-                    <Col xs={12} md={8} xl={4}><Statistic title="成交量" value={quote.Volume / 10000} suffix="万" precision={0} /></Col>
-                    <Col xs={12} md={8} xl={4}><Statistic title="成交额" value={quote.Amount / 10000} suffix="万" precision={0} /></Col>
-                  </Row>
-                </Card>
-              </Col>
-              <Col xs={24} xl={8}>
-                <Card title={<Space><ThunderboltOutlined />最新信号</Space>}>
-                  {latestSignals.length > 0 ? (
-                    <Space direction="vertical" size={10} style={{ display: 'flex' }}>
-                      {latestSignals.map((signal: Signal) => (
-                        <Flex key={`${signal.Date}-${signal.Type}-${signal.Indicator}`} justify="space-between" align="center" gap={12}>
-                          <Space direction="vertical" size={2}>
-                            <Typography.Text strong>{signal.Type}</Typography.Text>
-                            <Typography.Text type="secondary">{signal.Date} · {signal.Indicator}</Typography.Text>
-                          </Space>
-                          <Tag color={signal.Strength >= 0 ? 'red' : 'green'}>{signal.Details || '触发'}</Tag>
-                        </Flex>
-                      ))}
-                    </Space>
-                  ) : (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无最新信号" />
-                  )}
-                </Card>
-              </Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="现价" value={quote.Price} precision={2} valueStyle={{ color: valueColor }} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="涨跌幅" value={pct} suffix="%" precision={2} valueStyle={{ color: valueColor }} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="开盘" value={quote.Open} precision={2} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="收盘" value={latestClose} precision={2} valueStyle={{ color: latestClose ? valueColor : undefined }} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="昨收" value={quote.LastClose} precision={2} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="最高" value={quote.High} precision={2} valueStyle={{ color: '#ef4444' }} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="最低" value={quote.Low} precision={2} valueStyle={{ color: '#22c55e' }} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="成交量" value={quote.Volume / 10000} suffix="万" precision={0} /></Col>
+              <Col xs={12} md={8} xl={4}><Statistic title="成交额" value={quote.Amount / 10000} suffix="万" precision={0} /></Col>
             </Row>
-
-            <Row gutter={[16, 16]}>
-              <Col xs={24} xl={8}>
-                <Card>
-                  <Statistic
-                    title="最新收盘价"
-                    value={latestClose}
-                    precision={2}
-                    valueStyle={{ color: latestClose ? valueColor : undefined }}
-                    prefix={<LineChartOutlined />}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} xl={8}>
-                <Card>
-                  <Statistic
-                    title="信号回测样本"
-                    value={analysis?.signals ?? 0}
-                    suffix={`/ ${analysis?.count ?? 0}`}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} xl={8}>
-                <Card>
-                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
-                    <Typography.Text type="secondary">上涨/下跌强度</Typography.Text>
-                    <Progress
-                      percent={Math.min(100, Math.max(0, 50 + pct * 5))}
-                      strokeColor={up ? '#ef4444' : '#22c55e'}
-                      showInfo={false}
-                    />
-                    <Typography.Text>{formatSigned(pct, '%')}</Typography.Text>
-                  </Space>
-                </Card>
-              </Col>
-            </Row>
-          </>
+          </Card>
         )}
 
         {loading && (
@@ -684,7 +626,55 @@ export default function StockDetail() {
           <Space direction="vertical" size={16} style={{ display: 'flex' }}>
             <Card><ChartToolbar ktype={ktype} onKtypeChange={setKtype} mainOverlay={mainOverlay} onMainOverlayChange={setMainOverlay} subPanel={subPanel} onSubPanelChange={setSubPanel} /></Card>
             <Card bodyStyle={{ padding: 0 }}><CandlestickChart klines={klines} indicator={indicator} mainOverlay={mainOverlay} subPanel={subPanel} /></Card>
-            {analysis && analysis.summary.length > 0 && (
+          </Space>
+        )}
+
+        {showTabs && tab === 'signal' && (
+          <Space direction="vertical" size={16} style={{ display: 'flex' }}>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} xl={12}>
+                <Card>
+                  <Statistic
+                    title="信号回测样本"
+                    value={analysis?.signals ?? 0}
+                    suffix={`/ ${analysis?.count ?? 0}`}
+                  />
+                </Card>
+              </Col>
+              <Col xs={24} xl={12}>
+                <Card>
+                  <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+                    <Typography.Text type="secondary">上涨/下跌强度</Typography.Text>
+                    <Progress
+                      percent={Math.min(100, Math.max(0, 50 + pct * 5))}
+                      strokeColor={up ? '#ef4444' : '#22c55e'}
+                      showInfo={false}
+                    />
+                    <Typography.Text>{formatSigned(pct, '%')}</Typography.Text>
+                  </Space>
+                </Card>
+              </Col>
+            </Row>
+
+            <Card title={<Space><ThunderboltOutlined />最新信号</Space>}>
+              {latestSignals.length > 0 ? (
+                <Space direction="vertical" size={10} style={{ display: 'flex' }}>
+                  {latestSignals.map((signal: Signal) => (
+                    <Flex key={`${signal.Date}-${signal.Type}-${signal.Indicator}`} justify="space-between" align="center" gap={12}>
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text strong>{signal.Type}</Typography.Text>
+                        <Typography.Text type="secondary">{signal.Date} · {signal.Indicator}</Typography.Text>
+                      </Space>
+                      <Tag color={signal.Strength >= 0 ? 'red' : 'green'}>{signal.Details || '触发'}</Tag>
+                    </Flex>
+                  ))}
+                </Space>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无最新信号" />
+              )}
+            </Card>
+
+            {analysis && analysis.summary.length > 0 ? (
               <Card title="信号回测" extra={<Typography.Text type="secondary">基于历史 {analysis.count} 根K线中的 {analysis.signals} 个信号</Typography.Text>}>
                 <Table
                   pagination={false}
@@ -704,7 +694,10 @@ export default function StockDetail() {
                   ]}
                 />
               </Card>
+            ) : (
+              <Card><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无信号回测数据" /></Card>
             )}
+
             {analysis && analysis.outcomes.length > 0 && (
               <Card title="信号明细">
                 <Table
