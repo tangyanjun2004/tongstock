@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type Time } from 'lightweight-charts';
 import type { KlineItem, IndicatorData } from '../../types/api';
-import { formatTdxDate } from '../../lib/datetime';
+import { formatDateTime, formatTdxDate } from '../../lib/datetime';
 
 interface Props {
   klines: KlineItem[];
@@ -25,19 +25,32 @@ interface HoverInfo {
   rsi?: Record<string, number>;
 }
 
-function toTime(dateStr: string): Time {
+function isIntradayKline(klines: KlineItem[]): boolean {
+  return new Set(klines.map((item) => item.Time?.slice(0, 10))).size < klines.length;
+}
+
+function toTime(dateStr: string, intraday: boolean): Time {
+  if (intraday) {
+    const ts = Math.floor(new Date(dateStr).getTime() / 1000);
+    if (Number.isFinite(ts)) return ts as Time;
+  }
   return dateStr.slice(0, 10) as Time;
 }
 
-function safeTime(klines: KlineItem[], i: number): Time | null {
-  const t = klines[i]?.Time;
-  return t ? toTime(t.slice(0, 10)) : null;
+function formatKlineTime(dateStr: string | undefined, intraday: boolean): string {
+  if (!dateStr) return '-';
+  return intraday ? formatDateTime(dateStr) : formatTdxDate(dateStr);
 }
 
-function safeData(values: number[], klines: KlineItem[]): { time: Time; value: number }[] {
+function safeTime(klines: KlineItem[], i: number, intraday: boolean): Time | null {
+  const t = klines[i]?.Time;
+  return t ? toTime(t, intraday) : null;
+}
+
+function safeData(values: number[], klines: KlineItem[], intraday: boolean): { time: Time; value: number }[] {
   const data: { time: Time; value: number }[] = [];
   for (let i = 0; i < values.length && i < klines.length; i++) {
-    const time = safeTime(klines, i);
+    const time = safeTime(klines, i, intraday);
     if (time) data.push({ time, value: values[i] });
   }
   return data;
@@ -65,6 +78,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
   useEffect(() => {
     const charts: IChartApi[] = [];
     chartRefs.current = [];
+    const intraday = isIntradayKline(klines);
 
     const makeChart = (container: HTMLDivElement | null, h: number): IChartApi | null => {
       if (!container) return null;
@@ -86,7 +100,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           horzLine: { color: '#3b82f6', width: 1, style: 2, labelBackgroundColor: '#3b82f6' },
         },
         rightPriceScale: { borderColor: '#334155', scaleMargins: h === MAIN_H ? { top: 0.05, bottom: 0.2 } : { top: 0.1, bottom: 0.1 } },
-        timeScale: { borderColor: '#334155', timeVisible: false, rightOffset: 5 },
+        timeScale: { borderColor: '#334155', timeVisible: intraday, secondsVisible: false, rightOffset: 5 },
       });
       charts.push(chart);
       return chart;
@@ -102,7 +116,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
       });
 
       const candleData = klines.map(k => ({
-        time: toTime(k.Time.slice(0, 10)),
+        time: toTime(k.Time, intraday),
         open: k.Open, high: k.High, low: k.Low, close: k.Close,
       }));
       candleSeries.setData(candleData);
@@ -113,7 +127,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
       });
       volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.80, bottom: 0 } });
       volumeSeries.setData(klines.map(k => ({
-        time: toTime(k.Time.slice(0, 10)),
+        time: toTime(k.Time, intraday),
         value: k.Volume,
         color: k.Close >= k.Open ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)',
       })));
@@ -127,7 +141,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           const series = mainChart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
           const data = [];
           for (let j = 0; j < values.length && j < klines.length; j++) {
-            if (values[j] > 0 && klines[j]?.Time) data.push({ time: toTime(klines[j].Time.slice(0, 10)), value: values[j] });
+            if (values[j] > 0 && klines[j]?.Time) data.push({ time: toTime(klines[j].Time, intraday), value: values[j] });
           }
           series.setData(data);
         }
@@ -139,7 +153,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           const values = indicator.boll[key as keyof typeof indicator.boll] as number[];
           if (!values) continue;
           const series = mainChart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-          series.setData(safeData(values, klines));
+          series.setData(safeData(values, klines, intraday));
         }
       }
 
@@ -160,7 +174,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           .map(s => {
             const m = markerMap[s.Type];
             return {
-              time: toTime(s.Date.slice(0, 10)),
+              time: toTime(s.Date, false),
               position: m ? m.pos : 'belowBar',
               color: m ? m.color : '#64748b',
               shape: m ? m.shape : 'arrowUp',
@@ -168,14 +182,14 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
             };
           });
         if (markers.length > 0) {
-          try { (candleSeries as any).setMarkers(markers.sort((a, b) => (a.time as string).localeCompare(b.time as string))); } catch {}
+          try { (candleSeries as any).setMarkers(markers.sort((a, b) => String(a.time).localeCompare(String(b.time)))); } catch {}
         }
       }
 
       // Crosshair move for hover info
       mainChart.subscribeCrosshairMove((param) => {
         if (!param.time) { setHover(null); return; }
-        const idx = klines.findIndex(k => toTime(k.Time.slice(0, 10)) === param.time);
+        const idx = klines.findIndex(k => toTime(k.Time, intraday) === param.time);
         if (idx < 0) { setHover(null); return; }
         const k = klines[idx];
         const prev = idx > 0 ? klines[idx - 1].Close : k.Close;
@@ -193,7 +207,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           }
         }
         setHover({
-          time: k.Time.slice(0, 10),
+          time: formatKlineTime(k.Time, intraday),
           open: k.Open, high: k.High, low: k.Low, close: k.Close, volume: k.Volume, pct,
           ma,
           macd: indicator?.macd ? { dif: indicator.macd.DIF[idx], dea: indicator.macd.DEA[idx], hist: indicator.macd.Hist[idx] } : undefined,
@@ -213,12 +227,12 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
       if (subChart) {
         if (subPanel === 'MACD' && indicator?.macd) {
           subChart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-            .setData(safeData(indicator.macd.DIF, klines));
+            .setData(safeData(indicator.macd.DIF, klines, intraday));
           subChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-            .setData(safeData(indicator.macd.DEA, klines));
+            .setData(safeData(indicator.macd.DEA, klines, intraday));
           const histData: { time: Time; value: number; color: string }[] = [];
           for (let i = 0; i < indicator.macd.Hist.length && i < klines.length; i++) {
-            const time = safeTime(klines, i);
+            const time = safeTime(klines, i, intraday);
             if (time) histData.push({ time, value: indicator.macd.Hist[i], color: indicator.macd.Hist[i] >= 0 ? 'rgba(239,68,68,0.6)' : 'rgba(34,197,94,0.6)' });
           }
           subChart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }).setData(histData);
@@ -227,7 +241,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
         if (subPanel === 'KDJ' && indicator?.kdj) {
           const addLine = (values: number[], color: string) => {
             subChart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-              .setData(safeData(values, klines));
+              .setData(safeData(values, klines, intraday));
           };
           addLine(indicator.kdj.K, '#f59e0b');
           addLine(indicator.kdj.D, '#3b82f6');
@@ -239,7 +253,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           let ci = 0;
           for (const [, values] of Object.entries(indicator.rsi)) {
             subChart.addSeries(LineSeries, { color: rsiColors[ci++ % rsiColors.length], lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-              .setData(safeData(values, klines));
+              .setData(safeData(values, klines, intraday));
           }
         }
       }
@@ -278,6 +292,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
   }, [klines, indicator, mainOverlay, subPanel]);
 
   const last = klines[klines.length - 1];
+  const intraday = isIntradayKline(klines);
   const defaultPct = last && klines.length > 1 ? ((last.Close - klines[klines.length - 2].Close) / klines[klines.length - 2].Close * 100) : 0;
   const h = hover;
 
@@ -323,7 +338,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           </>
         ) : (
           <>
-            <span className="text-slate-400 font-medium">{formatTdxDate(last?.Time)}</span>
+            <span className="text-slate-400 font-medium">{formatKlineTime(last?.Time, intraday)}</span>
             <span>开 <span className="text-white">{fmtN(last?.Open)}</span></span>
             <span>高 <span className="text-red-400">{fmtN(last?.High)}</span></span>
             <span>低 <span className="text-green-400">{fmtN(last?.Low)}</span></span>
