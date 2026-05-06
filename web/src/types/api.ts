@@ -99,6 +99,22 @@ export interface FinanceTrendsResponse {
   available: string[];
 }
 
+export interface FinanceMetricRow {
+  name: string;
+  values: string[];
+}
+
+export interface FinanceMetricTable {
+  title: string;
+  periods: string[];
+  rows: FinanceMetricRow[];
+}
+
+export interface FinanceMetricsResponse {
+  code: string;
+  tables: FinanceMetricTable[];
+}
+
 export interface XdXrItem {
   Date: string;
   Category: string;

@@ -40,6 +40,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { api } from '../../api/client';
 import type {
   FinanceTrendsResponse,
+  FinanceMetricsResponse,
   MinuteItem,
   Signal,
   SignalAnalysis as SignalAnalysisType,
@@ -210,6 +211,7 @@ export default function StockDetail() {
   const [subPanel, setSubPanel] = useState('MACD');
   const [finance, setFinance] = useState<any>(null);
   const [financeTrends, setFinanceTrends] = useState<FinanceTrendsResponse | null>(null);
+  const [financeMetrics, setFinanceMetrics] = useState<FinanceMetricsResponse | null>(null);
   const [financeTrendMode, setFinanceTrendMode] = useState<'quarter' | 'year'>('quarter');
   const [financeCompareMode, setFinanceCompareMode] = useState<FinanceCompareMode>('raw');
   const [financeViewMode, setFinanceViewMode] = useState<FinanceViewMode>('chart');
@@ -339,7 +341,10 @@ export default function StockDetail() {
 
   useEffect(() => {
     if (!code || detailStatus !== 'ready') return;
-    if (tab === 'finance') api.finance(code).then(setFinance).catch(() => {});
+    if (tab === 'finance') {
+      api.finance(code).then(setFinance).catch(() => {});
+      api.financeMetrics(code).then(setFinanceMetrics).catch(() => setFinanceMetrics(null));
+    }
     if (tab === 'company') api.company(code).then((cats) => {
       setCompanyCats(cats);
       if (cats.length > 0 && !selectedCat) void loadCompanyContent(cats[0].Name);
@@ -723,6 +728,35 @@ export default function StockDetail() {
                 ))}
               </Descriptions>
             </Card>
+
+            {financeMetrics && financeMetrics.tables.length > 0 && (
+              <Card title="主要财务指标" extra={<Typography.Text type="secondary">来自 F10「财务分析」文本解析</Typography.Text>}>
+                <Tabs
+                  items={financeMetrics.tables.map((table) => ({
+                    key: table.title,
+                    label: table.title,
+                    children: (
+                      <Table
+                        size="small"
+                        rowKey={(row) => row.name}
+                        dataSource={table.rows}
+                        pagination={false}
+                        scroll={{ x: 'max-content' }}
+                        columns={[
+                          { title: '指标', dataIndex: 'name', fixed: 'left', width: 180 },
+                          ...table.periods.map((period, index) => ({
+                            title: formatDate(period),
+                            key: period,
+                            align: 'right' as const,
+                            render: (_: unknown, row: { values: string[] }) => row.values[index] || '-',
+                          })),
+                        ]}
+                      />
+                    ),
+                  }))}
+                />
+              </Card>
+            )}
 
             <Card
               title={<Space><BarChartOutlined />财务趋势</Space>}

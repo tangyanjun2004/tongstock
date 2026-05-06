@@ -119,6 +119,22 @@ type financeTrendsResponse struct {
 	Available []string             `json:"available"`
 }
 
+type financeMetricTableResponse struct {
+	Code   string               `json:"code"`
+	Tables []financeMetricTable `json:"tables"`
+}
+
+type financeMetricTable struct {
+	Title   string             `json:"title"`
+	Periods []string           `json:"periods"`
+	Rows    []financeMetricRow `json:"rows"`
+}
+
+type financeMetricRow struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
 type scoredStockMatch struct {
 	stockSearchMatch
 	Score int
@@ -451,6 +467,7 @@ func main() {
 	r.GET("/api/xdxr", handleXdXr)
 	r.GET("/api/finance", handleFinance)
 	r.GET("/api/finance/trends", handleFinanceTrends)
+	r.GET("/api/finance/metrics", handleFinanceMetrics)
 	r.GET("/api/index", handleIndex)
 	r.GET("/api/company", handleCompany)
 	r.GET("/api/company/content", handleCompanyContent)
@@ -755,6 +772,24 @@ func handleFinanceTrends(c *gin.Context) {
 		Records:   records,
 		Available: []string{"quarter", "year"},
 	})
+}
+
+func handleFinanceMetrics(c *gin.Context) {
+	code, ok := resolveStockCodeOrRespond(c, c.Query("code"))
+	if !ok {
+		return
+	}
+	content, err := fetchCompanyBlockContent(code, "财务分析")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取主要财务指标失败: %v", err)})
+		return
+	}
+	tables := parseMainFinanceMetricTables(content)
+	if len(tables) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到主要财务指标数据"})
+		return
+	}
+	c.JSON(http.StatusOK, financeMetricTableResponse{Code: code, Tables: tables})
 }
 
 func handleIndex(c *gin.Context) {
@@ -1717,9 +1752,118 @@ func fetchCompanyBlockContent(code, block string) (string, error) {
 	return "", fmt.Errorf("未找到块: %s", block)
 }
 
+func parseMainFinanceMetricTables(content string) []financeMetricTable {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r", ""), "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(strings.TrimSpace(line), "【1.主要财务指标】") {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	tables := make([]financeMetricTable, 0, 2)
+	for i := start; i < len(lines) && len(tables) < 2; i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "【2.") {
+			break
+		}
+		if !strings.HasPrefix(line, "┌") {
+			continue
+		}
+		rows := extractBoxTableRows(lines[i:])
+		if table := buildFinanceMetricTable(rows, len(tables)); len(table.Periods) > 0 && len(table.Rows) > 0 {
+			tables = append(tables, table)
+		}
+	}
+	return tables
+}
+
+func buildFinanceMetricTable(rows [][]string, index int) financeMetricTable {
+	if len(rows) < 2 || len(rows[0]) < 2 {
+		return financeMetricTable{}
+	}
+	periods := make([]string, 0, len(rows[0])-1)
+	for _, header := range rows[0][1:] {
+		period := strings.TrimSpace(header)
+		if regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(period) {
+			periods = append(periods, period)
+		}
+	}
+	if len(periods) == 0 {
+		return financeMetricTable{}
+	}
+	title := "主要财务指标"
+	if index == 0 {
+		title = "年度对比"
+	} else if index == 1 {
+		title = "最新季度"
+	}
+	result := financeMetricTable{Title: title, Periods: periods, Rows: make([]financeMetricRow, 0, len(rows)-1)}
+	for _, row := range mergeWrappedFinanceMetricRows(rows[1:]) {
+		if len(row) < len(periods)+1 {
+			continue
+		}
+		name := sanitizeFinanceMetricName(row[0])
+		if name == "" || strings.Contains(name, "审计意见") {
+			continue
+		}
+		values := make([]string, 0, len(periods))
+		for _, value := range row[1 : len(periods)+1] {
+			values = append(values, strings.TrimSpace(value))
+		}
+		result.Rows = append(result.Rows, financeMetricRow{Name: name, Values: values})
+	}
+	return result
+}
+
+func mergeWrappedFinanceMetricRows(rows [][]string) [][]string {
+	merged := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		first := strings.TrimSpace(row[0])
+		if first != "" && len(merged) > 0 && allEmptyCells(row[1:]) {
+			prev := merged[len(merged)-1]
+			prev[0] = strings.TrimSpace(prev[0] + first)
+			merged[len(merged)-1] = prev
+			continue
+		}
+		merged = append(merged, append([]string(nil), row...))
+	}
+	return merged
+}
+
+func allEmptyCells(cells []string) bool {
+	for _, cell := range cells {
+		if strings.TrimSpace(cell) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func parseFinanceTrendRecords(content, mode string) ([]financeTrendRecord, []string) {
 	if strings.TrimSpace(content) == "" {
 		return nil, nil
+	}
+	mainTables := parseMainFinanceMetricTables(content)
+	if len(mainTables) > 0 {
+		idx := 1
+		if mode == "year" || len(mainTables) == 1 {
+			idx = 0
+		}
+		if idx < len(mainTables) {
+			if records, metrics := financeTrendRecordsFromMetricTable(mainTables[idx]); len(records) > 0 {
+				return records, metrics
+			}
+		}
 	}
 	lines := strings.Split(strings.ReplaceAll(content, "\r", ""), "\n")
 	var yearRecords []financeTrendRecord
@@ -1753,6 +1897,31 @@ func parseFinanceTrendRecords(content, mode string) ([]financeTrendRecord, []str
 		return yearRecords, yearMetrics
 	}
 	return nil, nil
+}
+
+func financeTrendRecordsFromMetricTable(table financeMetricTable) ([]financeTrendRecord, []string) {
+	if len(table.Periods) == 0 || len(table.Rows) == 0 {
+		return nil, nil
+	}
+	records := make([]financeTrendRecord, len(table.Periods))
+	for i, period := range table.Periods {
+		records[i] = financeTrendRecord{Period: period, Year: parseYear(period), Quarter: quarterLabel(period), Label: quarterLabel(period)}
+	}
+	metricSeen := map[string]struct{}{}
+	metrics := make([]string, 0, 7)
+	for _, row := range table.Rows {
+		assignFinanceMetricValues(records, row.Name, row.Values)
+		for _, metric := range financeMetricKeysForName(row.Name) {
+			if _, ok := metricSeen[metric]; ok {
+				continue
+			}
+			metricSeen[metric] = struct{}{}
+			metrics = append(metrics, metric)
+		}
+	}
+	records = pruneEmptyFinanceRecords(records)
+	sort.Slice(records, func(i, j int) bool { return records[i].Period < records[j].Period })
+	return records, metrics
 }
 
 func parseQuarterFinanceTable(lines []string) ([]financeTrendRecord, []string) {
@@ -1856,6 +2025,9 @@ func extractBoxTableRows(lines []string) [][]string {
 		if strings.HasPrefix(line, "└") && len(rows) > 0 {
 			break
 		}
+		if strings.HasPrefix(line, "┌") || strings.HasPrefix(line, "├") {
+			continue
+		}
 		if !strings.HasPrefix(line, "│") {
 			if len(rows) > 0 {
 				break
@@ -1916,10 +2088,11 @@ func assignFinanceMetricValues(records []financeTrendRecord, name string, values
 		if v == nil {
 			continue
 		}
+		isGrowthRate := strings.Contains(name, "增长率") || strings.Contains(name, "同比")
 		switch {
-		case strings.Contains(name, "营业收入"):
+		case !isGrowthRate && (strings.Contains(name, "营业收入") || strings.Contains(name, "营业总收") || strings.Contains(name, "总营收")):
 			records[i].Revenue = v
-		case strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "净利润"):
+		case !isGrowthRate && (strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "归母净利") || strings.Contains(name, "净利润")):
 			records[i].NetProfit = v
 		case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
 			records[i].GrossMargin = v
@@ -1936,10 +2109,11 @@ func assignFinanceMetricValues(records []financeTrendRecord, name string, values
 }
 
 func financeMetricKeysForName(name string) []string {
+	isGrowthRate := strings.Contains(name, "增长率") || strings.Contains(name, "同比")
 	switch {
-	case strings.Contains(name, "营业收入"):
+	case !isGrowthRate && (strings.Contains(name, "营业收入") || strings.Contains(name, "营业总收") || strings.Contains(name, "总营收")):
 		return []string{"revenue"}
-	case strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "净利润"):
+	case !isGrowthRate && (strings.Contains(name, "归属母公司净利润") || strings.Contains(name, "归母净利") || strings.Contains(name, "净利润")):
 		return []string{"netProfit"}
 	case strings.Contains(name, "销售毛利率") || strings.Contains(name, "毛利率"):
 		return []string{"grossMargin"}
