@@ -51,6 +51,7 @@ import FinanceTrendChart, { type FinanceTrendChartHandle, type FinanceTrendMetri
 import MinuteChart from '../../components/charts/MinuteChart';
 import StockSearchInput from '../../components/StockSearchInput';
 import TabContent from '../../components/TabContent';
+import { formatDate, formatShortDate, formatTdxDate, formatTime } from '../../lib/datetime';
 import { parseTdxText, renderTdxHtml } from '../../lib/tdx-parser';
 
 type Tab = 'chart' | 'signal' | 'finance' | 'company' | 'dividend' | 'intraday';
@@ -352,14 +353,14 @@ export default function StockDetail() {
           if (r.List && r.List.length > 0) {
             setMinuteData(r.List);
             const today = new Date();
-            setMinuteDate(today.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }));
+            setMinuteDate(formatShortDate(today));
           } else {
             const yesterday = getLastTradingDay();
             try {
               const histR = await api.minuteHistory(code, yesterday);
               if (histR.List && histR.List.length > 0) {
                 setMinuteData(histR.List);
-                setMinuteDate(`${yesterday.slice(4, 6)}-${yesterday.slice(6, 8)}`);
+                setMinuteDate(formatShortDate(yesterday));
               }
             } catch {
               // ignore historical minute errors
@@ -459,7 +460,7 @@ export default function StockDetail() {
   ], [activeFinanceMetrics, financeCompareMode, financeTrendMode]);
 
   const dividendColumns: ColumnsType<XdXrItem> = [
-    { title: '日期', dataIndex: 'Date', render: (value) => value?.slice(0, 10) },
+    { title: '日期', dataIndex: 'Date', render: (value) => formatTdxDate(value) },
     { title: '类型', dataIndex: 'Category' },
     { title: '分红(元)', dataIndex: 'FenHong', align: 'right', render: (value) => value > 0 ? value.toFixed(4) : '-' },
     { title: '送转(股)', dataIndex: 'SongZhuanGu', align: 'right', render: (value) => value > 0 ? value.toFixed(2) : '-' },
@@ -471,7 +472,7 @@ export default function StockDetail() {
   const minuteColumns: ColumnsType<MinuteItem> = useMemo(() => {
     const lastClose = quote?.LastClose || 0;
     return [
-      { title: '时间', dataIndex: 'Time', width: 90 },
+      { title: '时间', dataIndex: 'Time', width: 90, render: (value: string) => formatTime(value) },
       {
         title: '价格',
         dataIndex: 'Price',
@@ -663,7 +664,7 @@ export default function StockDetail() {
                     <Flex key={`${signal.Date}-${signal.Type}-${signal.Indicator}`} justify="space-between" align="center" gap={12}>
                       <Space direction="vertical" size={2}>
                         <Typography.Text strong>{signal.Type}</Typography.Text>
-                        <Typography.Text type="secondary">{signal.Date} · {signal.Indicator}</Typography.Text>
+                        <Typography.Text type="secondary">{formatTdxDate(signal.Date)} · {signal.Indicator}</Typography.Text>
                       </Space>
                       <Tag color={signal.Strength >= 0 ? 'red' : 'green'}>{signal.Details || '触发'}</Tag>
                     </Flex>
@@ -706,7 +707,7 @@ export default function StockDetail() {
                   rowKey={(row) => `${row.date}-${row.type}-${row.indicator}`}
                   dataSource={[...analysis.outcomes].reverse()}
                   columns={[
-                    { title: '日期', dataIndex: 'date' },
+                    { title: '日期', dataIndex: 'date', render: (value) => formatDate(value) },
                     { title: '指标', dataIndex: 'indicator' },
                     { title: '信号', dataIndex: 'type' },
                     { title: '建议', dataIndex: 'action', render: (value) => <Tag color={value === '买入参考' ? 'red' : 'green'}>{value}</Tag> },
@@ -917,7 +918,7 @@ export default function StockDetail() {
             <Space direction="vertical" size={16} style={{ display: 'flex' }}>
               <Card>
                 <Space wrap size={[16, 12]}>
-                  <Typography.Text type="secondary">{minuteDate || new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short' })}</Typography.Text>
+                  <Typography.Text type="secondary">{minuteDate || formatShortDate(new Date())}</Typography.Text>
                   <Typography.Text>昨收 {lastClose.toFixed(2)}</Typography.Text>
                   <Typography.Text>均价 <span className={vwap >= lastClose ? 'price-up' : 'price-down'}>{vwap.toFixed(2)}</span></Typography.Text>
                   <Typography.Text>内盘 {(innerVol / 10000).toFixed(0)}万 ({innerPct.toFixed(1)}%)</Typography.Text>
@@ -942,7 +943,7 @@ export default function StockDetail() {
                   {selectedMinute && (
                     <Card size="small" style={{ marginTop: 12 }}>
                       <Space wrap>
-                        <Typography.Text>选中: {selectedMinute.Time}</Typography.Text>
+                        <Typography.Text>选中: {formatTime(selectedMinute.Time)}</Typography.Text>
                         <Typography.Text>价格: {selectedMinute.Price.toFixed(2)}</Typography.Text>
                         <Typography.Text>成交量: {Math.abs(selectedMinute.Number).toLocaleString()}手</Typography.Text>
                         <Button size="small" onClick={() => setHighlightedIdx(-1)}>清除选择</Button>

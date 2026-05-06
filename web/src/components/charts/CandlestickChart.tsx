@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type Time } from 'lightweight-charts';
 import type { KlineItem, IndicatorData } from '../../types/api';
+import { formatTdxDate } from '../../lib/datetime';
 
 interface Props {
   klines: KlineItem[];
@@ -322,7 +323,7 @@ export default function CandlestickChart({ klines, indicator, mainOverlay, subPa
           </>
         ) : (
           <>
-            <span className="text-slate-400 font-medium">{last?.Time?.slice(0, 10)}</span>
+            <span className="text-slate-400 font-medium">{formatTdxDate(last?.Time)}</span>
             <span>开 <span className="text-white">{fmtN(last?.Open)}</span></span>
             <span>高 <span className="text-red-400">{fmtN(last?.High)}</span></span>
             <span>低 <span className="text-green-400">{fmtN(last?.Low)}</span></span>

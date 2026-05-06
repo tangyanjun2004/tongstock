@@ -23,6 +23,7 @@ import {
 import { api } from '../api/client';
 import type { HistoryStock, Quote } from '../types/api';
 import StockSearchInput from '../components/StockSearchInput';
+import { formatDateTime } from '../lib/datetime';
 
 const INDICES = [
   { code: '999999', name: '上证指数' },
@@ -197,7 +198,7 @@ export default function Dashboard() {
                       <List.Item.Meta
                         avatar={<StockOutlined style={{ fontSize: 18, color: '#1677ff' }} />}
                         title={<Space><span>{item.quote?.Name || item.name || item.code}</span><Typography.Text type="secondary">{item.code}</Typography.Text></Space>}
-                        description={item.analyzed_at ? `最近分析：${new Date(item.analyzed_at).toLocaleString()}` : '已加入历史记录'}
+                        description={item.analyzed_at ? `最近分析：${formatDateTime(item.analyzed_at)}` : '已加入历史记录'}
                       />
                       <Space direction="vertical" size={0} style={{ alignItems: 'flex-end' }}>
                         <Typography.Text>{item.quote?.Price?.toFixed(2) ?? '--'}</Typography.Text>
