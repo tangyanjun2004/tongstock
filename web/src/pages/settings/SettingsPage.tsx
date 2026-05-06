@@ -1,23 +1,32 @@
-import { useState } from 'react';
-import { Settings, Save, Plus, X, Trash2, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  DeleteOutlined,
+  InfoCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
+import {
+  Alert,
+  Button,
+  Card,
+  Collapse,
+  Flex,
+  Input,
+  InputNumber,
+  Skeleton,
+  Space,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd';
+import { api } from '../../api/client';
+import type { IndicatorConfig, IndicatorParams } from '../../types/api';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface IndicatorParams {
-  ma: number[];
-  macd: { fast: number; slow: number; signal: number };
-  kdj: { n: number; m1: number; m2: number };
-  boll: { n: number; k: number };
-  rsi: number[];
-}
-
-interface IndicatorConfig {
-  defaults: IndicatorParams;
-  categories: Record<string, Partial<IndicatorParams>>;
-  overrides: Record<string, Partial<IndicatorParams>>;
-}
-
-// ── Defaults ───────────────────────────────────────────────────────────────────
+const { Paragraph, Text, Title } = Typography;
 
 const DEFAULT_PARAMS: IndicatorParams = {
   ma: [5, 10, 20, 60],
@@ -43,556 +52,554 @@ const CATEGORY_LABELS: Record<string, string> = {
   small_cap: '小盘股',
 };
 
-type Tab = 'defaults' | 'categories' | 'overrides';
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'defaults', label: '默认参数' },
-  { key: 'categories', label: '分类覆盖' },
-  { key: 'overrides', label: '个股覆盖' },
+const PARAM_OPTIONS: { key: keyof IndicatorParams; label: string }[] = [
+  { key: 'ma', label: 'MA 均线' },
+  { key: 'macd', label: 'MACD' },
+  { key: 'kdj', label: 'KDJ' },
+  { key: 'boll', label: 'BOLL' },
+  { key: 'rsi', label: 'RSI' },
 ];
 
-// ── Tiny Components ────────────────────────────────────────────────────────────
-
-function NumInput({ value, onChange, step, min, label }: {
-  value: number; onChange: (v: number) => void; step?: number; min?: number; label: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-xs text-slate-400">{label}</span>
-      <input
-        type="number"
-        value={value}
-        step={step ?? 1}
-        min={min ?? 1}
-        onChange={e => {
-          const v = step ? parseFloat(e.target.value) : parseInt(e.target.value);
-          if (!isNaN(v)) onChange(v);
-        }}
-        className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-white text-sm font-mono text-center focus:outline-none focus:border-blue-500"
-      />
-    </div>
-  );
+function cloneIndicatorConfig(config: IndicatorConfig): IndicatorConfig {
+  return structuredClone(config);
 }
 
-function TagInput({ values, onChange, label, description }: {
-  values: number[]; onChange: (v: number[]) => void; label: string; description: string;
+function NumberTagEditor({
+  label,
+  values,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  values: number[];
+  onChange: (values: number[]) => void;
+  placeholder: string;
 }) {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState<number | null>(null);
 
-  const add = () => {
-    const v = parseInt(input);
-    if (!isNaN(v) && v > 0 && !values.includes(v)) {
-      onChange([...values, v].sort((a, b) => a - b));
-      setInput('');
-    }
+  const addValue = () => {
+    if (!input || input <= 0 || values.includes(input)) return;
+    onChange([...values, input].sort((a, b) => a - b));
+    setInput(null);
   };
 
   return (
-    <Card title={label} description={description}>
-      <div className="flex flex-wrap items-center gap-2">
-        {values.map(v => (
-          <span key={v} className="inline-flex items-center gap-1.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-full px-3 py-1 text-sm font-mono">
-            {v}
-            <button onClick={() => onChange(values.filter(x => x !== v))} className="text-blue-400/60 hover:text-blue-300">
-              <X size={12} />
-            </button>
-          </span>
+    <Card size="small" title={label}>
+      <Space wrap size={[8, 8]}>
+        {values.map((value) => (
+          <Tag
+            key={value}
+            closable
+            onClose={() => onChange(values.filter((item) => item !== value))}
+            color="blue"
+            style={{ paddingInline: 10, paddingBlock: 4 }}
+          >
+            {value}
+          </Tag>
         ))}
-        <div className="inline-flex items-center gap-1">
-          <input
-            type="number"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && add()}
-            placeholder="周期"
-            className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-sm font-mono text-center focus:outline-none focus:border-blue-500"
-          />
-          <button onClick={add} className="p-1 text-slate-400 hover:text-blue-400 transition-colors">
-            <Plus size={14} />
-          </button>
-        </div>
-      </div>
+        <InputNumber
+          min={1}
+          value={input ?? undefined}
+          onChange={(value) => setInput(typeof value === 'number' ? value : null)}
+          onPressEnter={addValue}
+          placeholder={placeholder}
+          style={{ width: 110 }}
+        />
+        <Button icon={<PlusOutlined />} onClick={addValue}>添加</Button>
+      </Space>
     </Card>
   );
 }
 
-function Card({ title, description, children, actions }: {
-  title: string; description: string; children: React.ReactNode; actions?: React.ReactNode;
+function ParamGroupCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="bg-slate-900 rounded-lg border border-slate-800 p-4">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <h3 className="text-white font-medium text-sm">{title}</h3>
-          <p className="text-slate-500 text-xs mt-0.5">{description}</p>
-        </div>
-        {actions}
-      </div>
+    <Card size="small" title={title} extra={description ? <Text type="secondary">{description}</Text> : null}>
       {children}
-    </div>
+    </Card>
   );
 }
 
-// ── Indicator Param Editors ────────────────────────────────────────────────────
-
-function MacdEditor({ value, onChange }: { value: { fast: number; slow: number; signal: number }; onChange: (v: { fast: number; slow: number; signal: number }) => void }) {
-  return (
-    <div className="flex items-end gap-4">
-      <NumInput label="快线 (fast)" value={value.fast} onChange={v => onChange({ ...value, fast: v })} />
-      <NumInput label="慢线 (slow)" value={value.slow} onChange={v => onChange({ ...value, slow: v })} />
-      <NumInput label="信号线 (signal)" value={value.signal} onChange={v => onChange({ ...value, signal: v })} />
-    </div>
-  );
-}
-
-function KdjEditor({ value, onChange }: { value: { n: number; m1: number; m2: number }; onChange: (v: { n: number; m1: number; m2: number }) => void }) {
-  return (
-    <div className="flex items-end gap-4">
-      <NumInput label="RSV周期 (N)" value={value.n} onChange={v => onChange({ ...value, n: v })} />
-      <NumInput label="K平滑 (M1)" value={value.m1} onChange={v => onChange({ ...value, m1: v })} />
-      <NumInput label="D平滑 (M2)" value={value.m2} onChange={v => onChange({ ...value, m2: v })} />
-    </div>
-  );
-}
-
-function BollEditor({ value, onChange }: { value: { n: number; k: number }; onChange: (v: { n: number; k: number }) => void }) {
-  return (
-    <div className="flex items-end gap-4">
-      <NumInput label="MA周期 (N)" value={value.n} onChange={v => onChange({ ...value, n: v })} />
-      <NumInput label="标准差倍数 (K)" value={value.k} onChange={v => onChange({ ...value, k: v })} step={0.1} min={0.1} />
-    </div>
-  );
-}
-
-function PartialParamsEditor({ params, onChange, defaults }: {
-  params: Partial<IndicatorParams>; onChange: (p: Partial<IndicatorParams>) => void; defaults: IndicatorParams;
+function IndicatorEditors({
+  params,
+  onChange,
+}: {
+  params: IndicatorParams;
+  onChange: (next: IndicatorParams) => void;
 }) {
-  const PARAM_OPTIONS: { key: keyof IndicatorParams; label: string }[] = [
-    { key: 'ma', label: 'MA 均线' },
-    { key: 'macd', label: 'MACD' },
-    { key: 'kdj', label: 'KDJ' },
-    { key: 'boll', label: 'BOLL' },
-    { key: 'rsi', label: 'RSI' },
-  ];
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
+        <NumberTagEditor
+          label="MA 均线"
+          values={params.ma}
+          onChange={(ma) => onChange({ ...params, ma })}
+          placeholder="周期"
+        />
+        <NumberTagEditor
+          label="RSI 周期"
+          values={params.rsi}
+          onChange={(rsi) => onChange({ ...params, rsi })}
+          placeholder="周期"
+        />
+      </div>
 
-  const activeKeys = Object.keys(params) as (keyof IndicatorParams)[];
-  const inactiveKeys = PARAM_OPTIONS.filter(o => !activeKeys.includes(o.key));
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+        <ParamGroupCard title="MACD" description="快线 / 慢线 / 信号线">
+          <Space>
+            <InputNumber min={1} value={params.macd.fast} onChange={(value) => value && onChange({ ...params, macd: { ...params.macd, fast: value } })} addonBefore="Fast" />
+            <InputNumber min={1} value={params.macd.slow} onChange={(value) => value && onChange({ ...params, macd: { ...params.macd, slow: value } })} addonBefore="Slow" />
+            <InputNumber min={1} value={params.macd.signal} onChange={(value) => value && onChange({ ...params, macd: { ...params.macd, signal: value } })} addonBefore="Signal" />
+          </Space>
+        </ParamGroupCard>
 
-  const addParam = (key: keyof IndicatorParams) => {
-    const val = structuredClone(defaults[key]);
-    onChange({ ...params, [key]: val });
+        <ParamGroupCard title="KDJ" description="N / M1 / M2">
+          <Space>
+            <InputNumber min={1} value={params.kdj.n} onChange={(value) => value && onChange({ ...params, kdj: { ...params.kdj, n: value } })} addonBefore="N" />
+            <InputNumber min={1} value={params.kdj.m1} onChange={(value) => value && onChange({ ...params, kdj: { ...params.kdj, m1: value } })} addonBefore="M1" />
+            <InputNumber min={1} value={params.kdj.m2} onChange={(value) => value && onChange({ ...params, kdj: { ...params.kdj, m2: value } })} addonBefore="M2" />
+          </Space>
+        </ParamGroupCard>
+
+        <ParamGroupCard title="BOLL" description="周期 / 标准差倍数">
+          <Space>
+            <InputNumber min={1} value={params.boll.n} onChange={(value) => value && onChange({ ...params, boll: { ...params.boll, n: value } })} addonBefore="N" />
+            <InputNumber min={0.1} step={0.1} value={params.boll.k} onChange={(value) => value && onChange({ ...params, boll: { ...params.boll, k: value } })} addonBefore="K" />
+          </Space>
+        </ParamGroupCard>
+      </div>
+    </Space>
+  );
+}
+
+function PartialParamsEditor({
+  params,
+  defaults,
+  onChange,
+}: {
+  params: Partial<IndicatorParams>;
+  defaults: IndicatorParams;
+  onChange: (next: Partial<IndicatorParams>) => void;
+}) {
+  const [newPeriod, setNewPeriod] = useState<Record<string, number | null>>({});
+  const inactiveKeys = PARAM_OPTIONS.filter((option) => !(option.key in params));
+
+  const update = <K extends keyof IndicatorParams>(key: K, value: IndicatorParams[K]) => {
+    onChange({ ...params, [key]: value });
   };
 
-  const removeParam = (key: keyof IndicatorParams) => {
+  const remove = (key: keyof IndicatorParams) => {
     const next = { ...params };
     delete next[key];
     onChange(next);
   };
 
   return (
-    <div className="space-y-3">
-      {params.ma !== undefined && (
-        <div className="flex items-start gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs text-slate-400 font-medium">MA 均线周期</span>
-              <button onClick={() => removeParam('ma')} className="text-slate-600 hover:text-red-400"><X size={12} /></button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {params.ma.map(v => (
-                <span key={v} className="inline-flex items-center gap-1.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-full px-2.5 py-0.5 text-xs font-mono">
-                  {v}
-                  <button onClick={() => onChange({ ...params, ma: params.ma!.filter(x => x !== v) })} className="text-blue-400/60 hover:text-blue-300"><X size={10} /></button>
-                </span>
-              ))}
-              <InlineAddNumber onAdd={v => {
-                if (!params.ma!.includes(v)) onChange({ ...params, ma: [...params.ma!, v].sort((a, b) => a - b) });
-              }} />
-            </div>
-          </div>
-        </div>
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {params.ma && (
+        <ParamGroupCard title="MA 均线覆盖">
+          <Space wrap>
+            {params.ma.map((value) => (
+              <Tag key={value} closable onClose={() => update('ma', params.ma!.filter((item) => item !== value))} color="blue">{value}</Tag>
+            ))}
+            <InputNumber
+              min={1}
+              value={newPeriod.ma ?? undefined}
+              onChange={(value) => setNewPeriod((prev) => ({ ...prev, ma: typeof value === 'number' ? value : null }))}
+              placeholder="新周期"
+            />
+            <Button
+              icon={<PlusOutlined />}
+              onClick={() => {
+                const value = newPeriod.ma;
+                if (!value || params.ma!.includes(value)) return;
+                update('ma', [...params.ma!, value].sort((a, b) => a - b));
+                setNewPeriod((prev) => ({ ...prev, ma: null }));
+              }}
+            >
+              添加
+            </Button>
+            <Button danger type="text" onClick={() => remove('ma')}>移除配置</Button>
+          </Space>
+        </ParamGroupCard>
       )}
 
       {params.macd && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-slate-400 font-medium">MACD</span>
-            <button onClick={() => removeParam('macd')} className="text-slate-600 hover:text-red-400"><X size={12} /></button>
-          </div>
-          <MacdEditor value={params.macd} onChange={v => onChange({ ...params, macd: v })} />
-        </div>
+        <ParamGroupCard title="MACD 覆盖">
+          <Space>
+            <InputNumber min={1} value={params.macd.fast} onChange={(value) => value && update('macd', { ...params.macd!, fast: value })} addonBefore="Fast" />
+            <InputNumber min={1} value={params.macd.slow} onChange={(value) => value && update('macd', { ...params.macd!, slow: value })} addonBefore="Slow" />
+            <InputNumber min={1} value={params.macd.signal} onChange={(value) => value && update('macd', { ...params.macd!, signal: value })} addonBefore="Signal" />
+            <Button danger type="text" onClick={() => remove('macd')}>移除配置</Button>
+          </Space>
+        </ParamGroupCard>
       )}
 
       {params.kdj && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-slate-400 font-medium">KDJ</span>
-            <button onClick={() => removeParam('kdj')} className="text-slate-600 hover:text-red-400"><X size={12} /></button>
-          </div>
-          <KdjEditor value={params.kdj} onChange={v => onChange({ ...params, kdj: v })} />
-        </div>
+        <ParamGroupCard title="KDJ 覆盖">
+          <Space>
+            <InputNumber min={1} value={params.kdj.n} onChange={(value) => value && update('kdj', { ...params.kdj!, n: value })} addonBefore="N" />
+            <InputNumber min={1} value={params.kdj.m1} onChange={(value) => value && update('kdj', { ...params.kdj!, m1: value })} addonBefore="M1" />
+            <InputNumber min={1} value={params.kdj.m2} onChange={(value) => value && update('kdj', { ...params.kdj!, m2: value })} addonBefore="M2" />
+            <Button danger type="text" onClick={() => remove('kdj')}>移除配置</Button>
+          </Space>
+        </ParamGroupCard>
       )}
 
       {params.boll && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-slate-400 font-medium">BOLL</span>
-            <button onClick={() => removeParam('boll')} className="text-slate-600 hover:text-red-400"><X size={12} /></button>
-          </div>
-          <BollEditor value={params.boll} onChange={v => onChange({ ...params, boll: v })} />
-        </div>
+        <ParamGroupCard title="BOLL 覆盖">
+          <Space>
+            <InputNumber min={1} value={params.boll.n} onChange={(value) => value && update('boll', { ...params.boll!, n: value })} addonBefore="N" />
+            <InputNumber min={0.1} step={0.1} value={params.boll.k} onChange={(value) => value && update('boll', { ...params.boll!, k: value })} addonBefore="K" />
+            <Button danger type="text" onClick={() => remove('boll')}>移除配置</Button>
+          </Space>
+        </ParamGroupCard>
       )}
 
-      {params.rsi !== undefined && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs text-slate-400 font-medium">RSI 周期</span>
-            <button onClick={() => removeParam('rsi')} className="text-slate-600 hover:text-red-400"><X size={12} /></button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {params.rsi.map(v => (
-              <span key={v} className="inline-flex items-center gap-1.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-full px-2.5 py-0.5 text-xs font-mono">
-                {v}
-                <button onClick={() => onChange({ ...params, rsi: params.rsi!.filter(x => x !== v) })} className="text-blue-400/60 hover:text-blue-300"><X size={10} /></button>
-              </span>
+      {params.rsi && (
+        <ParamGroupCard title="RSI 覆盖">
+          <Space wrap>
+            {params.rsi.map((value) => (
+              <Tag key={value} closable onClose={() => update('rsi', params.rsi!.filter((item) => item !== value))} color="blue">{value}</Tag>
             ))}
-            <InlineAddNumber onAdd={v => {
-              if (!params.rsi!.includes(v)) onChange({ ...params, rsi: [...params.rsi!, v].sort((a, b) => a - b) });
-            }} />
-          </div>
-        </div>
+            <InputNumber
+              min={1}
+              value={newPeriod.rsi ?? undefined}
+              onChange={(value) => setNewPeriod((prev) => ({ ...prev, rsi: typeof value === 'number' ? value : null }))}
+              placeholder="新周期"
+            />
+            <Button
+              icon={<PlusOutlined />}
+              onClick={() => {
+                const value = newPeriod.rsi;
+                if (!value || params.rsi!.includes(value)) return;
+                update('rsi', [...params.rsi!, value].sort((a, b) => a - b));
+                setNewPeriod((prev) => ({ ...prev, rsi: null }));
+              }}
+            >
+              添加
+            </Button>
+            <Button danger type="text" onClick={() => remove('rsi')}>移除配置</Button>
+          </Space>
+        </ParamGroupCard>
       )}
 
       {inactiveKeys.length > 0 && (
-        <div className="flex items-center gap-2 pt-1">
-          <span className="text-xs text-slate-600">添加覆盖:</span>
-          {inactiveKeys.map(o => (
-            <button
-              key={o.key}
-              onClick={() => addParam(o.key)}
-              className="text-xs text-slate-500 hover:text-blue-400 border border-slate-700 hover:border-blue-500/50 rounded px-2 py-0.5 transition-colors"
-            >
-              + {o.label}
-            </button>
+        <Space wrap>
+          <Text type="secondary">添加覆盖项：</Text>
+          {inactiveKeys.map((option) => (
+            <Button key={option.key} size="small" icon={<PlusOutlined />} onClick={() => update(option.key, structuredClone(defaults[option.key]))}>
+              {option.label}
+            </Button>
           ))}
-        </div>
+        </Space>
       )}
-    </div>
+    </Space>
   );
 }
 
-function InlineAddNumber({ onAdd }: { onAdd: (v: number) => void }) {
-  const [input, setInput] = useState('');
-  const add = () => {
-    const v = parseInt(input);
-    if (!isNaN(v) && v > 0) { onAdd(v); setInput(''); }
-  };
+function DefaultsTab({ config, onChange }: { config: IndicatorConfig; onChange: (config: IndicatorConfig) => void }) {
   return (
-    <div className="inline-flex items-center gap-1">
-      <input
-        type="number"
-        value={input}
-        onChange={e => setInput(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && add()}
-        placeholder="+"
-        className="w-12 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-white text-xs font-mono text-center focus:outline-none focus:border-blue-500"
-      />
-      <button onClick={add} className="text-slate-500 hover:text-blue-400"><Plus size={12} /></button>
-    </div>
+    <IndicatorEditors
+      params={config.defaults}
+      onChange={(defaults) => onChange({ ...config, defaults })}
+    />
   );
 }
 
-// ── Collapsible Reference Table ────────────────────────────────────────────────
+function CategoriesTab({ config, onChange }: { config: IndicatorConfig; onChange: (config: IndicatorConfig) => void }) {
+  const [newName, setNewName] = useState('');
+  const items = Object.entries(config.categories).map(([key, params]) => ({
+    key,
+    label: (
+      <Flex justify="space-between" align="center" style={{ width: '100%' }}>
+        <Space>
+          <Text strong>{CATEGORY_LABELS[key] || key}</Text>
+          <Text type="secondary" code>{key}</Text>
+        </Space>
+        <Button
+          danger
+          type="text"
+          icon={<DeleteOutlined />}
+          onClick={(event) => {
+            event.stopPropagation();
+            const next = { ...config.categories };
+            delete next[key];
+            onChange({ ...config, categories: next });
+          }}
+        />
+      </Flex>
+    ),
+    children: (
+      <PartialParamsEditor
+        params={params}
+        defaults={config.defaults}
+        onChange={(nextParams) => onChange({
+          ...config,
+          categories: { ...config.categories, [key]: nextParams },
+        })}
+      />
+    ),
+  }));
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Alert type="info" showIcon message="优先级：个股覆盖 > 分类覆盖 > 默认参数" />
+      <Collapse items={items} defaultActiveKey={items.map((item) => item.key)} />
+      <Card size="small" title="新增分类覆盖">
+        <Space>
+          <Input
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            placeholder="分类名称，如 mid_cap"
+            onPressEnter={() => {
+              const name = newName.trim();
+              if (!name || config.categories[name]) return;
+              onChange({ ...config, categories: { ...config.categories, [name]: {} } });
+              setNewName('');
+            }}
+            style={{ width: 280 }}
+          />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              const name = newName.trim();
+              if (!name || config.categories[name]) return;
+              onChange({ ...config, categories: { ...config.categories, [name]: {} } });
+              setNewName('');
+            }}
+          >
+            添加分类
+          </Button>
+        </Space>
+      </Card>
+    </Space>
+  );
+}
+
+function OverridesTab({ config, onChange }: { config: IndicatorConfig; onChange: (config: IndicatorConfig) => void }) {
+  const [newCode, setNewCode] = useState('');
+  const items = Object.entries(config.overrides).map(([code, params]) => ({
+    key: code,
+    label: (
+      <Flex justify="space-between" align="center" style={{ width: '100%' }}>
+        <Space>
+          <Text strong code>{code}</Text>
+          <Text type="secondary">{Object.keys(params).length} 项覆盖</Text>
+        </Space>
+        <Button
+          danger
+          type="text"
+          icon={<DeleteOutlined />}
+          onClick={(event) => {
+            event.stopPropagation();
+            const next = { ...config.overrides };
+            delete next[code];
+            onChange({ ...config, overrides: next });
+          }}
+        />
+      </Flex>
+    ),
+    children: (
+      <PartialParamsEditor
+        params={params}
+        defaults={config.defaults}
+        onChange={(nextParams) => onChange({
+          ...config,
+          overrides: { ...config.overrides, [code]: nextParams },
+        })}
+      />
+    ),
+  }));
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Alert type="info" showIcon message="个股覆盖优先级最高，适合处理少量特例股票。" />
+      <Collapse items={items} defaultActiveKey={items.map((item) => item.key)} />
+      <Card size="small" title="新增个股覆盖">
+        <Space>
+          <Input
+            value={newCode}
+            onChange={(event) => setNewCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="6位股票代码"
+            onPressEnter={() => {
+              if (!/^\d{6}$/.test(newCode) || config.overrides[newCode]) return;
+              onChange({ ...config, overrides: { ...config.overrides, [newCode]: {} } });
+              setNewCode('');
+            }}
+            style={{ width: 180 }}
+          />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!/^\d{6}$/.test(newCode) || !!config.overrides[newCode]}
+            onClick={() => {
+              if (!/^\d{6}$/.test(newCode) || config.overrides[newCode]) return;
+              onChange({ ...config, overrides: { ...config.overrides, [newCode]: {} } });
+              setNewCode('');
+            }}
+          >
+            添加个股
+          </Button>
+        </Space>
+      </Card>
+    </Space>
+  );
+}
 
 function ParamReference() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="bg-slate-900/50 rounded-lg border border-slate-800/50">
-      <button onClick={() => setOpen(!open)} className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-slate-400 hover:text-slate-300 transition-colors">
-        <Info size={14} />
-        <span>参数说明</span>
-        {open ? <ChevronDown size={14} className="ml-auto" /> : <ChevronRight size={14} className="ml-auto" />}
-      </button>
-      {open && (
-        <div className="px-4 pb-3">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-slate-800 text-slate-500">
-              <th className="text-left p-2 font-normal">参数</th>
-              <th className="text-left p-2 font-normal">默认值</th>
-              <th className="text-left p-2 font-normal">说明</th>
-            </tr></thead>
-            <tbody className="text-slate-400">
-              <tr className="border-b border-slate-800/30"><td className="p-2 font-mono text-xs">ma</td><td className="p-2">[5, 10, 20, 60]</td><td className="p-2">均线周期列表</td></tr>
-              <tr className="border-b border-slate-800/30"><td className="p-2 font-mono text-xs">macd</td><td className="p-2">12 / 26 / 9</td><td className="p-2">快线 / 慢线 / 信号线周期</td></tr>
-              <tr className="border-b border-slate-800/30"><td className="p-2 font-mono text-xs">kdj</td><td className="p-2">9 / 3 / 3</td><td className="p-2">RSV周期 / K平滑 / D平滑</td></tr>
-              <tr className="border-b border-slate-800/30"><td className="p-2 font-mono text-xs">boll</td><td className="p-2">20 / 2.0</td><td className="p-2">MA周期 / 标准差倍数</td></tr>
-              <tr><td className="p-2 font-mono text-xs">rsi</td><td className="p-2">[6, 14]</td><td className="p-2">RSI周期列表</td></tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Tab: Defaults ──────────────────────────────────────────────────────────────
-
-function DefaultsTab({ config, onChange }: { config: IndicatorConfig; onChange: (c: IndicatorConfig) => void }) {
-  const d = config.defaults;
-  const set = (patch: Partial<IndicatorParams>) => onChange({ ...config, defaults: { ...d, ...patch } });
+  const items = useMemo(() => ([
+    { key: '1', label: 'ma', value: '[5, 10, 20, 60]', desc: '均线周期列表' },
+    { key: '2', label: 'macd', value: '12 / 26 / 9', desc: '快线 / 慢线 / 信号线周期' },
+    { key: '3', label: 'kdj', value: '9 / 3 / 3', desc: 'RSV 周期 / K 平滑 / D 平滑' },
+    { key: '4', label: 'boll', value: '20 / 2.0', desc: '均线周期 / 标准差倍数' },
+    { key: '5', label: 'rsi', value: '[6, 14]', desc: 'RSI 周期列表' },
+  ]), []);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <TagInput label="MA 均线" description="移动平均线周期列表" values={d.ma} onChange={ma => set({ ma })} />
-      <TagInput label="RSI" description="相对强弱指标周期列表" values={d.rsi} onChange={rsi => set({ rsi })} />
-      <Card title="MACD" description="指数平滑异同移动平均线">
-        <MacdEditor value={d.macd} onChange={macd => set({ macd })} />
-      </Card>
-      <Card title="KDJ" description="随机指标">
-        <KdjEditor value={d.kdj} onChange={kdj => set({ kdj })} />
-      </Card>
-      <Card title="BOLL" description="布林带通道">
-        <BollEditor value={d.boll} onChange={boll => set({ boll })} />
-      </Card>
-    </div>
+    <Collapse
+      items={[
+        {
+          key: 'reference',
+          label: (
+            <Space>
+              <InfoCircleOutlined />
+              <span>参数说明</span>
+            </Space>
+          ),
+          children: (
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              {items.map((item) => (
+                <Flex key={item.key} justify="space-between" align="center" style={{ padding: '8px 0', borderBottom: '1px solid var(--ant-color-border-secondary)' }}>
+                  <Space>
+                    <Text code>{item.label}</Text>
+                    <Text>{item.value}</Text>
+                  </Space>
+                  <Text type="secondary">{item.desc}</Text>
+                </Flex>
+              ))}
+            </Space>
+          ),
+        },
+      ]}
+    />
   );
 }
-
-// ── Tab: Categories ────────────────────────────────────────────────────────────
-
-function CategoriesTab({ config, onChange }: { config: IndicatorConfig; onChange: (c: IndicatorConfig) => void }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    Object.keys(config.categories).forEach(k => { init[k] = true; });
-    return init;
-  });
-  const [newName, setNewName] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const toggle = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
-
-  const remove = (key: string) => {
-    const next = { ...config.categories };
-    delete next[key];
-    onChange({ ...config, categories: next });
-  };
-
-  const add = () => {
-    const name = newName.trim();
-    if (!name || config.categories[name]) return;
-    onChange({ ...config, categories: { ...config.categories, [name]: {} } });
-    setExpanded(prev => ({ ...prev, [name]: true }));
-    setNewName('');
-    setAdding(false);
-  };
-
-  const updateCat = (key: string, params: Partial<IndicatorParams>) => {
-    onChange({ ...config, categories: { ...config.categories, [key]: params } });
-  };
-
-  const entries = Object.entries(config.categories);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-slate-500 text-sm">按市值分类覆盖默认参数，优先级：个股覆盖 &gt; 分类覆盖 &gt; 默认参数</p>
-
-      {entries.map(([key, params]) => (
-        <div key={key} className="bg-slate-900 rounded-lg border border-slate-800">
-          <button
-            onClick={() => toggle(key)}
-            className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-slate-800/50 transition-colors rounded-t-lg"
-          >
-            {expanded[key] ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-            <span className="text-white font-medium text-sm">{CATEGORY_LABELS[key] || key}</span>
-            <span className="text-slate-600 text-xs font-mono">{key}</span>
-            <span className="text-slate-600 text-xs ml-auto mr-2">{Object.keys(params).length} 项覆盖</span>
-            <button
-              onClick={e => { e.stopPropagation(); remove(key); }}
-              className="text-slate-600 hover:text-red-400 transition-colors p-1"
-            >
-              <Trash2 size={14} />
-            </button>
-          </button>
-          {expanded[key] && (
-            <div className="px-4 pb-4 border-t border-slate-800">
-              <div className="pt-3">
-                <PartialParamsEditor params={params} onChange={p => updateCat(key, p)} defaults={config.defaults} />
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {adding ? (
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && add()}
-            placeholder="分类名称 (如 mid_cap)"
-            autoFocus
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-white text-sm font-mono focus:outline-none focus:border-blue-500 w-56"
-          />
-          <button onClick={add} className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1">确定</button>
-          <button onClick={() => { setAdding(false); setNewName(''); }} className="text-sm text-slate-500 hover:text-slate-300 px-2 py-1">取消</button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-2 text-sm text-slate-400 hover:text-blue-400 border border-dashed border-slate-700 hover:border-blue-500/50 rounded-lg px-4 py-2.5 w-full justify-center transition-colors"
-        >
-          <Plus size={14} /> 添加分类
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── Tab: Overrides ─────────────────────────────────────────────────────────────
-
-function OverridesTab({ config, onChange }: { config: IndicatorConfig; onChange: (c: IndicatorConfig) => void }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    Object.keys(config.overrides).forEach(k => { init[k] = true; });
-    return init;
-  });
-  const [newCode, setNewCode] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const toggle = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
-
-  const remove = (key: string) => {
-    const next = { ...config.overrides };
-    delete next[key];
-    onChange({ ...config, overrides: next });
-  };
-
-  const add = () => {
-    const code = newCode.trim();
-    if (!/^\d{6}$/.test(code) || config.overrides[code]) return;
-    onChange({ ...config, overrides: { ...config.overrides, [code]: {} } });
-    setExpanded(prev => ({ ...prev, [code]: true }));
-    setNewCode('');
-    setAdding(false);
-  };
-
-  const updateOverride = (key: string, params: Partial<IndicatorParams>) => {
-    onChange({ ...config, overrides: { ...config.overrides, [key]: params } });
-  };
-
-  const entries = Object.entries(config.overrides);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-slate-500 text-sm">为特定股票设置专属参数，优先级最高</p>
-
-      {entries.map(([code, params]) => (
-        <div key={code} className="bg-slate-900 rounded-lg border border-slate-800">
-          <button
-            onClick={() => toggle(code)}
-            className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-slate-800/50 transition-colors rounded-t-lg"
-          >
-            {expanded[code] ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-            <span className="text-white font-medium text-sm font-mono">{code}</span>
-            <span className="text-slate-600 text-xs ml-auto mr-2">{Object.keys(params).length} 项覆盖</span>
-            <button
-              onClick={e => { e.stopPropagation(); remove(code); }}
-              className="text-slate-600 hover:text-red-400 transition-colors p-1"
-            >
-              <Trash2 size={14} />
-            </button>
-          </button>
-          {expanded[code] && (
-            <div className="px-4 pb-4 border-t border-slate-800">
-              <div className="pt-3">
-                <PartialParamsEditor params={params} onChange={p => updateOverride(code, p)} defaults={config.defaults} />
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {adding ? (
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={newCode}
-            onChange={e => setNewCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            onKeyDown={e => e.key === 'Enter' && add()}
-            placeholder="6位股票代码"
-            autoFocus
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-white text-sm font-mono focus:outline-none focus:border-blue-500 w-40"
-          />
-          <button onClick={add} disabled={!/^\d{6}$/.test(newCode)} className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 disabled:text-slate-600 disabled:cursor-not-allowed">确定</button>
-          <button onClick={() => { setAdding(false); setNewCode(''); }} className="text-sm text-slate-500 hover:text-slate-300 px-2 py-1">取消</button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-2 text-sm text-slate-400 hover:text-blue-400 border border-dashed border-slate-700 hover:border-blue-500/50 rounded-lg px-4 py-2.5 w-full justify-center transition-colors"
-        >
-          <Plus size={14} /> 添加个股覆盖
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [config, setConfig] = useState<IndicatorConfig>(structuredClone(INITIAL_CONFIG));
-  const [tab, setTab] = useState<Tab>('defaults');
-  const [saved, setSaved] = useState(false);
+  const [config, setConfig] = useState<IndicatorConfig>(cloneIndicatorConfig(INITIAL_CONFIG));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [messageApi, contextHolder] = message.useMessage();
 
-  const handleSave = () => {
-    // TODO: POST to API when backend is ready
-    console.log('Save config:', JSON.stringify(config, null, 2));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const loadConfig = async () => {
+    setLoading(true);
+    try {
+      const next = await api.indicatorSettings();
+      setConfig(next);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '加载配置失败';
+      messageApi.error(text);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadConfig();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const result = await api.saveIndicatorSettings(config);
+      setConfig(result.config);
+      messageApi.success('配置已保存');
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '保存配置失败';
+      messageApi.error(text);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="space-y-5 max-w-4xl">
-      <div>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <Settings size={24} /> 配置
-        </h1>
-        <p className="text-slate-500 text-sm mt-1">指标参数配置 · <span className="font-mono">~/.tongstock/indicator.yaml</span></p>
-      </div>
+    <>
+      {contextHolder}
+      <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 1200 }}>
+        <div>
+          <Title level={3} style={{ marginBottom: 0 }}>
+            <Space>
+              <SettingOutlined />
+              配置
+            </Space>
+          </Title>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            指标参数配置 · <Text code>{config.path || '~/.tongstock/indicator.yaml'}</Text>
+          </Paragraph>
+        </div>
 
-      <div className="flex items-center gap-1 border-b border-slate-800">
-        {TABS.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-2 text-sm transition-colors ${
-              tab === t.key
-                ? 'text-white border-b-2 border-blue-500 bg-slate-800 rounded-t-lg'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+        <Alert
+          type="info"
+          showIcon
+          message="当前页面已接入服务端配置"
+          description="修改后将写入指标配置文件，并立即影响后续指标计算与筛选结果。"
+        />
 
-      {tab === 'defaults' && <DefaultsTab config={config} onChange={setConfig} />}
-      {tab === 'categories' && <CategoriesTab config={config} onChange={setConfig} />}
-      {tab === 'overrides' && <OverridesTab config={config} onChange={setConfig} />}
+        {loading ? (
+          <Card>
+            <Skeleton active paragraph={{ rows: 12 }} />
+          </Card>
+        ) : (
+          <>
+            <Tabs
+              items={[
+                {
+                  key: 'defaults',
+                  label: '默认参数',
+                  children: <DefaultsTab config={config} onChange={setConfig} />,
+                },
+                {
+                  key: 'categories',
+                  label: '分类覆盖',
+                  children: <CategoriesTab config={config} onChange={setConfig} />,
+                },
+                {
+                  key: 'overrides',
+                  label: '个股覆盖',
+                  children: <OverridesTab config={config} onChange={setConfig} />,
+                },
+              ]}
+            />
 
-      <ParamReference />
+            <ParamReference />
 
-      <div className="flex items-center gap-4">
-        <button
-          onClick={handleSave}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white font-medium transition-colors"
-        >
-          <Save size={16} /> 保存配置
-        </button>
-        {saved && <span className="text-green-400 text-sm animate-pulse">已保存</span>}
-      </div>
-    </div>
+            <Flex justify="space-between" align="center" wrap="wrap" gap={12}>
+              <Space wrap>
+                <Button type="primary" size="large" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+                  保存配置
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={() => void loadConfig()}>
+                  重新加载
+                </Button>
+              </Space>
+              <Tooltip title="重置为当前页面内置的默认示例配置，再按保存写入服务端。">
+                <Button onClick={() => setConfig(cloneIndicatorConfig(INITIAL_CONFIG))}>
+                  恢复示例默认配置
+                </Button>
+              </Tooltip>
+            </Flex>
+          </>
+        )}
+      </Space>
+    </>
   );
 }

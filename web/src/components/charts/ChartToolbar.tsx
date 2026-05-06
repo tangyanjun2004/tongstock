@@ -1,3 +1,5 @@
+import { Radio, Segmented, Space, Typography } from 'antd';
+
 interface Props {
   ktype: string;
   onKtypeChange: (ktype: string) => void;
@@ -29,52 +31,39 @@ const SUB_PANELS = [
   { value: 'RSI', label: 'RSI' },
 ];
 
-export default function ChartToolbar({ ktype, onKtypeChange, mainOverlay, onMainOverlayChange, subPanel, onSubPanelChange }: Props) {
+export default function ChartToolbar({
+  ktype,
+  onKtypeChange,
+  mainOverlay,
+  onMainOverlayChange,
+  subPanel,
+  onSubPanelChange,
+}: Props) {
   return (
-    <div className="flex items-center justify-between bg-slate-900 rounded-t-lg border border-slate-800 border-b-0 px-3 py-2">
-      <div className="flex gap-0.5">
-        {KTYPES.map(k => (
-          <button
-            key={k.value}
-            onClick={() => onKtypeChange(k.value)}
-            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-              ktype === k.value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            {k.label}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-3">
-        <div className="flex gap-0.5 items-center">
-          <span className="text-slate-500 text-xs mr-1">主图</span>
-          {MAIN_OVERLAYS.map(o => (
-            <button
-              key={o.value}
-              onClick={() => onMainOverlayChange(mainOverlay === o.value ? '' : o.value)}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                mainOverlay === o.value ? 'bg-yellow-600 text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-0.5 items-center">
-          <span className="text-slate-500 text-xs mr-1">副图</span>
-          {SUB_PANELS.map(s => (
-            <button
-              key={s.value}
-              onClick={() => onSubPanelChange(subPanel === s.value ? '' : s.value)}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                subPanel === s.value ? 'bg-blue-700 text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+    <Space direction="vertical" size={12} style={{ display: 'flex' }}>
+      <Segmented options={KTYPES} value={ktype} onChange={(value) => onKtypeChange(String(value))} block />
+      <Space wrap size={16} align="center">
+        <Space size={8} align="center">
+          <Typography.Text type="secondary">主图</Typography.Text>
+          <Radio.Group
+            optionType="button"
+            buttonStyle="solid"
+            options={MAIN_OVERLAYS}
+            value={mainOverlay || undefined}
+            onChange={(event) => onMainOverlayChange(event.target.value === mainOverlay ? '' : event.target.value)}
+          />
+        </Space>
+        <Space size={8} align="center">
+          <Typography.Text type="secondary">副图</Typography.Text>
+          <Radio.Group
+            optionType="button"
+            buttonStyle="solid"
+            options={SUB_PANELS}
+            value={subPanel || undefined}
+            onChange={(event) => onSubPanelChange(event.target.value === subPanel ? '' : event.target.value)}
+          />
+        </Space>
+      </Space>
+    </Space>
   );
 }

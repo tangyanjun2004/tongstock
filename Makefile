@@ -1,4 +1,8 @@
-.PHONY: all web cli server clean
+.PHONY: all web cli server install clean
+
+BINDIR ?= $(if $(GOBIN),$(GOBIN),$(shell go env GOPATH)/bin)
+CLI_BIN := tongstock
+SERVER_BIN := tongstock-server
 
 all: web cli server
 
@@ -8,11 +12,16 @@ web:
 	cp -r web/dist pkg/web/dist
 
 cli:
-	go build -o tongstock-cli ./cmd/cli
+	go build -o $(CLI_BIN) ./cmd/cli
 
 server: web
-	go build -o tongstock-server ./cmd/server
+	go build -o $(SERVER_BIN) ./cmd/server
+
+install: server cli
+	mkdir -p $(BINDIR)
+	install -m 755 $(CLI_BIN) $(BINDIR)/$(CLI_BIN)
+	install -m 755 $(SERVER_BIN) $(BINDIR)/$(SERVER_BIN)
 
 clean:
-	rm -f tongstock-cli tongstock-server
+	rm -f $(CLI_BIN) $(SERVER_BIN)
 	rm -rf pkg/web/dist

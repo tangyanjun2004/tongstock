@@ -12,6 +12,21 @@ import (
 
 var globalConfig *ParamConfig
 
+func cloneConfig(cfg *ParamConfig) (*ParamConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var cloned ParamConfig
+	if err := yaml.Unmarshal(data, &cloned); err != nil {
+		return nil, err
+	}
+	return &cloned, nil
+}
+
 func Init(configPath string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -21,7 +36,11 @@ func Init(configPath string) error {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	globalConfig = &cfg
+	cloned, err := cloneConfig(&cfg)
+	if err != nil {
+		return err
+	}
+	globalConfig = cloned
 	return nil
 }
 
@@ -33,6 +52,22 @@ func LoadDefault() {
 			KDJ:  &ta.KDJConfig{N: 9, M1: 3, M2: 3},
 			BOLL: &ta.BOLLConfig{N: 20, K: 2.0},
 			RSI:  []int{6, 12, 24},
+		},
+		Categories: map[string]CategoryParams{
+			"large_cap": {
+				MA:   []int{5, 10, 20, 60, 120},
+				MACD: &ta.MACDConfig{Fast: 12, Slow: 26, Signal: 9},
+			},
+			"small_cap": {
+				MA:   []int{5, 10, 20},
+				MACD: &ta.MACDConfig{Fast: 8, Slow: 17, Signal: 9},
+				KDJ:  &ta.KDJConfig{N: 7, M1: 3, M2: 3},
+			},
+		},
+		Overrides: map[string]CategoryParams{
+			"000001": {
+				KDJ: &ta.KDJConfig{N: 5, M1: 3, M2: 3},
+			},
 		},
 	}
 }
@@ -55,6 +90,36 @@ func AutoInit() error {
 	}
 
 	return Init(path)
+}
+
+func GetConfig() (*ParamConfig, error) {
+	if err := AutoInit(); err != nil {
+		return nil, err
+	}
+	return cloneConfig(globalConfig)
+}
+
+func SaveConfig(cfg *ParamConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("配置不能为空")
+	}
+	if err := config.EnsureHomeDir(); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	path := config.IndicatorConfigPath()
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return err
+	}
+	cloned, err := cloneConfig(cfg)
+	if err != nil {
+		return err
+	}
+	globalConfig = cloned
+	return nil
 }
 
 func writeDefaultConfig(path string) error {

@@ -1,63 +1,110 @@
-import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { TrendingUp, LayoutDashboard, Search, Settings, BarChart3 } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
-import StockDetail from './pages/stock/StockDetail';
-import StockChoose from './pages/stock/StockChoose';
-import Screen from './pages/Screen';
-import SettingsPage from './pages/settings/SettingsPage';
+import { Suspense, lazy } from 'react';
+import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { BarChartOutlined, DashboardOutlined, SearchOutlined, SettingOutlined, StockOutlined } from '@ant-design/icons';
+import { Avatar, Breadcrumb, Layout, Menu, Skeleton, Space, Typography } from 'antd';
+import type { MenuProps } from 'antd';
 import StockSearchInput from './components/StockSearchInput';
 
-function SearchBar() {
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const StockDetail = lazy(() => import('./pages/stock/StockDetail'));
+const StockChoose = lazy(() => import('./pages/stock/StockChoose'));
+const Screen = lazy(() => import('./pages/Screen'));
+const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+
+const { Header, Content, Sider } = Layout;
+
+function GlobalSearch() {
   const navigate = useNavigate();
 
   return (
-    <StockSearchInput
-      placeholder="输入代码、名称或拼音..."
-      limit={8}
-      inputClassName="w-64 px-3 py-2 text-sm"
-      panelClassName="mt-1"
-      onSelect={match => navigate(`/stock/${match.code}`)}
-    />
-  );
-}
-
-function NavLink({ to, children, icon: Icon }: { to: string; children: React.ReactNode; icon: any }) {
-  const loc = useLocation();
-  const active = loc.pathname === to || (to !== '/' && loc.pathname.startsWith(to));
-  return (
-    <Link to={to} className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-      active ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-    }`}>
-      <Icon size={18} /> {children}
-    </Link>
-  );
-}
-
-function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-screen overflow-hidden">
-      <nav className="w-56 bg-slate-900 border-r border-slate-800 p-4 flex flex-col gap-1 shrink-0">
-        <Link to="/" className="flex items-center gap-2 px-2 mb-6">
-          <TrendingUp className="text-blue-500" size={24} />
-          <span className="text-lg font-bold text-white">TongStock</span>
-        </Link>
-        <NavLink to="/" icon={LayoutDashboard}>市场总览</NavLink>
-        <NavLink to="/stock/choose" icon={BarChart3}>个股分析</NavLink>
-        <NavLink to="/screen" icon={Search}>信号筛选</NavLink>
-        <NavLink to="/settings" icon={Settings}>配置</NavLink>
-        <div className="mt-auto pt-4 border-t border-slate-800">
-          <SearchBar />
-        </div>
-      </nav>
-      <main className="flex-1 p-6 overflow-auto bg-slate-950">{children}</main>
+    <div style={{ width: 320, maxWidth: '100%' }}>
+      <StockSearchInput
+        placeholder="输入代码、名称或拼音..."
+        limit={8}
+        onSelect={(match) => navigate(`/stock/${match.code}`)}
+      />
     </div>
+  );
+}
+
+function RouteFallback() {
+  return (
+    <Space direction="vertical" size={16} style={{ display: 'flex', width: '100%' }}>
+      <Skeleton.Button active block style={{ width: 240, height: 40 }} />
+      <Skeleton active paragraph={{ rows: 4 }} />
+      <Skeleton active paragraph={{ rows: 8 }} />
+    </Space>
+  );
+}
+
+function AppLayout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const selectedKey = location.pathname.startsWith('/stock')
+    ? '/stock/choose'
+    : location.pathname.startsWith('/screen')
+      ? '/screen'
+      : location.pathname.startsWith('/settings')
+        ? '/settings'
+        : '/';
+
+  const menuItems: MenuProps['items'] = [
+    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">市场总览</Link> },
+    { key: '/stock/choose', icon: <BarChartOutlined />, label: <Link to="/stock/choose">个股分析</Link> },
+    { key: '/screen', icon: <SearchOutlined />, label: <Link to="/screen">信号筛选</Link> },
+    { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">配置</Link> },
+  ];
+
+  const breadcrumbItems = buildBreadcrumbs(location.pathname);
+
+  return (
+    <Layout>
+      <Sider width={240} theme="dark" style={{ borderRight: '1px solid #1f2937' }}>
+        <div style={{ padding: 20, borderBottom: '1px solid #1f2937' }}>
+          <Space align="center" size={12}>
+            <Avatar shape="square" icon={<StockOutlined />} style={{ backgroundColor: '#1677ff' }} />
+            <div>
+              <Typography.Title level={4} style={{ margin: 0, color: '#fff' }}>
+                TongStock
+              </Typography.Title>
+              <Typography.Text type="secondary">A 股分析工作台</Typography.Text>
+            </div>
+          </Space>
+        </div>
+        <Menu
+          mode="inline"
+          theme="dark"
+          selectedKeys={[selectedKey]}
+          items={menuItems}
+          style={{ borderInlineEnd: 0, paddingTop: 12 }}
+        />
+      </Sider>
+      <Layout>
+        <Header
+          style={{
+            padding: '0 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: '1px solid #1f2937',
+          }}
+        >
+          <Breadcrumb items={breadcrumbItems} />
+          <GlobalSearch />
+        </Header>
+        <Content style={{ padding: 24, overflow: 'auto' }}>
+          <Suspense fallback={<RouteFallback />}>
+            {children}
+          </Suspense>
+        </Content>
+      </Layout>
+    </Layout>
   );
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
+      <AppLayout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/stock/choose" element={<StockChoose />} />
@@ -66,7 +113,39 @@ export default function App() {
           <Route path="/screen" element={<Screen />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
-      </Layout>
+      </AppLayout>
     </BrowserRouter>
   );
+}
+
+function buildBreadcrumbs(pathname: string) {
+  const parts = pathname.split('/').filter(Boolean);
+  const items: { title: React.ReactNode }[] = [{ title: <Link to="/">TongStock</Link> }];
+
+  if (parts.length === 0) {
+    items.push({ title: '市场总览' });
+    return items;
+  }
+
+  const labels: Record<string, string> = {
+    stock: '个股分析',
+    choose: '选择股票',
+    screen: '信号筛选',
+    settings: '配置',
+    chart: 'K线+指标',
+    finance: '财务',
+    company: '公司',
+    dividend: '分红',
+    intraday: '分时',
+  };
+
+  let current = '';
+  parts.forEach((part, index) => {
+    current += `/${part}`;
+    items.push({
+      title: index === parts.length - 1 ? (labels[part] ?? part) : <Link to={current}>{labels[part] ?? part}</Link>,
+    });
+  });
+
+  return items;
 }

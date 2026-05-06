@@ -221,3 +221,18 @@ export interface HistoryStock {
   name?: string;
   analyzed_at: string;
 }
+
+export interface IndicatorParams {
+  ma: number[];
+  macd: { fast: number; slow: number; signal: number };
+  kdj: { n: number; m1: number; m2: number };
+  boll: { n: number; k: number };
+  rsi: number[];
+}
+
+export interface IndicatorConfig {
+  defaults: IndicatorParams;
+  categories: Record<string, Partial<IndicatorParams>>;
+  overrides: Record<string, Partial<IndicatorParams>>;
+  path?: string;
+}

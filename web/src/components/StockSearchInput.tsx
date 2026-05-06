@@ -1,5 +1,7 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { AutoComplete, Input, Spin, Tag, Typography } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { SearchStockMatch } from '../types/api';
 
@@ -22,39 +24,19 @@ export default function StockSearchInput({
   placeholder = '输入股票代码、名称或拼音',
   limit = 10,
   autoFocus = false,
-  panelClassName = '',
-  inputClassName = '',
   containerClassName = '',
-  iconClassName = '',
-  showIcon = true,
   emptyText,
   onSelect,
 }: StockSearchInputProps) {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchStockMatch[]>([]);
-  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const requestSeq = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const listboxId = useId();
 
   useEffect(() => {
     setQuery(initialQuery);
   }, [initialQuery]);
-
-  useEffect(() => {
-    const onClick = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-        setHighlightedIndex(-1);
-      }
-    };
-
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
-  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -62,7 +44,6 @@ export default function StockSearchInput({
       setResults([]);
       setMessage(null);
       setLoading(false);
-      setHighlightedIndex(-1);
       return;
     }
 
@@ -74,7 +55,6 @@ export default function StockSearchInput({
         if (requestSeq.current !== seq) return;
 
         setResults(response.matches);
-        setHighlightedIndex(response.matches.length > 0 ? 0 : -1);
         if (response.matches.length === 0) {
           setMessage(emptyText ?? `未找到股票 “${trimmed}”`);
         } else if (!response.resolved && response.matches.length > 1) {
@@ -85,7 +65,6 @@ export default function StockSearchInput({
       } catch {
         if (requestSeq.current !== seq) return;
         setResults([]);
-        setHighlightedIndex(-1);
         setMessage('搜索失败，请稍后重试');
       } finally {
         if (requestSeq.current === seq) {
@@ -97,128 +76,75 @@ export default function StockSearchInput({
     return () => window.clearTimeout(timer);
   }, [emptyText, limit, query]);
 
-  const hasPanel = open && (!!query.trim() || loading) && (results.length > 0 || !!message || loading);
+  const options = useMemo(() => {
+    const mapped: Array<{ value: string; label: ReactNode; match?: SearchStockMatch }> = results.map((match) => ({
+      value: match.name,
+      label: (
+        <div
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600 }}>{match.name}</div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {match.exchange} · {labelForMatchType(match.matchType)}
+            </Typography.Text>
+          </div>
+          <Tag color="blue" style={{ marginInlineEnd: 0, fontFamily: 'monospace' }}>{match.code}</Tag>
+        </div>
+      ),
+      match,
+    }));
 
-  const activeOptionId = useMemo(() => {
-    if (highlightedIndex < 0 || highlightedIndex >= results.length) return undefined;
-    return `${listboxId}-${results[highlightedIndex].code}`;
-  }, [highlightedIndex, listboxId, results]);
+    if (message) {
+      mapped.push({
+        value: '__message__',
+        label: (
+          <Typography.Text type="secondary" style={{ display: 'block', padding: '4px 0' }}>
+            {message}
+          </Typography.Text>
+        ),
+        match: undefined,
+      });
+    }
 
-  const selectMatch = (match: SearchStockMatch) => {
-    setQuery(match.name);
-    setOpen(false);
-    setMessage(null);
-    onSelect(match);
-  };
+    return mapped;
+  }, [message, results]);
 
   const handleEnter = () => {
-    if (highlightedIndex >= 0 && results[highlightedIndex]) {
-      selectMatch(results[highlightedIndex]);
-      return;
-    }
-
     if (results.length === 1) {
-      selectMatch(results[0]);
-      return;
-    }
-
-    if (results.length > 1) {
-      setOpen(true);
-      setMessage(`找到 ${results.length} 个匹配项，请先选择具体个股`);
-      return;
-    }
-
-    if (query.trim()) {
-      setOpen(true);
-      setMessage(emptyText ?? `未找到股票 “${query.trim()}”`);
+      onSelect(results[0]);
+      setQuery(results[0].name);
     }
   };
 
   return (
-    <div ref={containerRef} className={`relative ${containerClassName}`}>
-      <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 focus-within:border-blue-500 transition-colors">
-        {showIcon && <Search size={18} className={`ml-3 shrink-0 text-slate-500 ${iconClassName}`} />}
-        <input
-          type="text"
-          value={query}
+    <div className={containerClassName}>
+      <AutoComplete
+        value={query}
+        options={options}
+        onSearch={setQuery}
+        onChange={setQuery}
+        onSelect={(_, option) => {
+          const match = (option as { match?: SearchStockMatch }).match;
+          if (match) {
+            setQuery(match.name);
+            onSelect(match);
+          }
+        }}
+        style={{ width: '100%' }}
+        notFoundContent={loading ? <Spin size="small" /> : null}
+        filterOption={false}
+      >
+        <Input
+          allowClear
           autoFocus={autoFocus}
-          role="combobox"
-          aria-expanded={hasPanel}
-          aria-controls={listboxId}
-          aria-activedescendant={activeOptionId}
-          aria-autocomplete="list"
           placeholder={placeholder}
-          onFocus={() => setOpen(true)}
-          onChange={event => {
-            setQuery(event.target.value);
-            setOpen(true);
-          }}
-          onKeyDown={event => {
-            if (event.key === 'ArrowDown') {
-              event.preventDefault();
-              setOpen(true);
-              setHighlightedIndex(prev => (results.length === 0 ? -1 : Math.min(prev + 1, results.length - 1)));
-              return;
-            }
-            if (event.key === 'ArrowUp') {
-              event.preventDefault();
-              setOpen(true);
-              setHighlightedIndex(prev => (results.length === 0 ? -1 : Math.max(prev - 1, 0)));
-              return;
-            }
-            if (event.key === 'Escape') {
-              setOpen(false);
-              setHighlightedIndex(-1);
-              return;
-            }
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              handleEnter();
-            }
-          }}
-          className={`flex-1 bg-transparent text-white focus:outline-none ${showIcon ? '' : 'px-4'} ${inputClassName}`}
+          prefix={<SearchOutlined />}
+          onPressEnter={handleEnter}
+          suffix={loading ? <Spin size="small" /> : null}
         />
-      </div>
-
-      {hasPanel && (
-        <div
-          id={listboxId}
-          role="listbox"
-          className={`absolute top-full mt-2 w-full overflow-hidden rounded-lg border border-slate-700 bg-slate-800 shadow-xl z-50 ${panelClassName}`}
-        >
-          {loading && <div className="px-4 py-3 text-sm text-slate-400">搜索中...</div>}
-
-          {!loading && results.length > 0 && (
-            <div className="max-h-80 overflow-auto py-1">
-              {results.map((match, index) => {
-                const active = index === highlightedIndex;
-                return (
-                  <button
-                    key={match.code}
-                    id={`${listboxId}-${match.code}`}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    onClick={() => selectMatch(match)}
-                    className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-slate-700' : 'hover:bg-slate-700/70'}`}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-white font-medium truncate">{match.name}</div>
-                      <div className="text-xs text-slate-400 truncate">{match.exchange} · {labelForMatchType(match.matchType)}</div>
-                    </div>
-                    <span className="font-mono text-sm text-blue-400 shrink-0">{match.code}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {!loading && message && (
-            <div className="border-t border-slate-700/60 px-4 py-3 text-sm text-slate-400">{message}</div>
-          )}
-        </div>
-      )}
+      </AutoComplete>
     </div>
   );
 }

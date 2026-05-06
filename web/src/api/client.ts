@@ -4,6 +4,7 @@ import type {
   BlockItem, CodeItem, IndexBar, ScreenResponse, SignalAnalysis,
   StockSearchResponse,
   HistoryStock,
+  IndicatorConfig,
 } from '../types/api';
 
 const BASE = '';
@@ -121,5 +122,14 @@ export const api = {
   historyDelete: (code: string) =>
     fetchJSON<{ message: string }>(`/api/history/${code}`, {
       method: 'DELETE',
+    }),
+
+  indicatorSettings: () =>
+    fetchJSON<IndicatorConfig>('/api/settings/indicator'),
+
+  saveIndicatorSettings: (config: IndicatorConfig) =>
+    fetchJSON<{ message: string; config: IndicatorConfig }>('/api/settings/indicator', {
+      method: 'PUT',
+      body: JSON.stringify(config),
     }),
 };
