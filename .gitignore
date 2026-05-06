@@ -2,6 +2,7 @@
 .hive/events.json
 
 # Build outputs
+/tongstock
 tongstock-cli
 tongstock-server
 server
