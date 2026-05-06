@@ -3,6 +3,7 @@ import type {
   CompanyCategory, MinuteItem, TradeItem, AuctionItem,
   BlockItem, CodeItem, IndexBar, ScreenResponse, SignalAnalysis,
   StockSearchResponse,
+  StockSearchIndexResponse,
   HistoryStock,
   IndicatorConfig,
   FinanceTrendsResponse,
@@ -113,6 +114,9 @@ export const api = {
 
   searchStocks: (query: string, limit = 10) =>
     fetchJSON<StockSearchResponse>(`/api/stocks/search?query=${encodeURIComponent(query)}&limit=${limit}`),
+
+  stockSearchIndex: () =>
+    fetchJSON<StockSearchIndexResponse>('/api/stocks/search-index'),
 
   history: () =>
     fetchJSON<{ data: HistoryStock[] }>('/api/history').then(r => r.data),

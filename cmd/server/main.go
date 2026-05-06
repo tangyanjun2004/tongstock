@@ -43,6 +43,21 @@ type stockSearchMatch struct {
 	MatchType string `json:"matchType"`
 }
 
+type stockSearchIndexResponse struct {
+	UpdatedAt int64                   `json:"updatedAt"`
+	Total     int                     `json:"total"`
+	Items     []stockSearchIndexEntry `json:"items"`
+}
+
+type stockSearchIndexEntry struct {
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Exchange string `json:"exchange"`
+	NameNorm string `json:"nameNorm"`
+	Pinyin   string `json:"pinyin"`
+	Initials string `json:"initials"`
+}
+
 type stockSearchResponse struct {
 	Query    string             `json:"query"`
 	Total    int                `json:"total"`
@@ -142,6 +157,30 @@ func handleStockSearch(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stockSearchResponse{Query: query, Total: len(matches), Exact: exact, Resolved: resolved, Matches: matches})
+}
+
+func handleStockSearchIndex(c *gin.Context) {
+	items, err := getStockSearchIndex()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	entries := make([]stockSearchIndexEntry, 0, len(items))
+	for _, item := range items {
+		entries = append(entries, stockSearchIndexEntry{
+			Code:     item.Code,
+			Name:     item.Name,
+			Exchange: item.Exchange,
+			NameNorm: item.NameNorm,
+			Pinyin:   item.PinyinNorm,
+			Initials: item.Initials,
+		})
+	}
+	stockSearchIndexCache.RLock()
+	updatedAt := stockSearchIndexCache.builtAt.UnixMilli()
+	stockSearchIndexCache.RUnlock()
+	c.JSON(http.StatusOK, stockSearchIndexResponse{UpdatedAt: updatedAt, Total: len(entries), Items: entries})
 }
 
 func resolveStockCodeOrRespond(c *gin.Context, raw string) (string, bool) {
@@ -416,6 +455,7 @@ func main() {
 	r.GET("/api/company", handleCompany)
 	r.GET("/api/company/content", handleCompanyContent)
 	r.GET("/api/stocks/search", handleStockSearch)
+	r.GET("/api/stocks/search-index", handleStockSearchIndex)
 	r.GET("/api/block", handleBlock)
 	r.GET("/api/block/files", handleBlockFiles)
 	r.GET("/api/block/list", handleBlockList)

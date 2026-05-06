@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AutoComplete, Input, Spin, Tag, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
-import { api } from '../api/client';
 import type { SearchStockMatch } from '../types/api';
+import { getStockSearchIndex, maybeRefreshStockSearchIndex, searchCachedStocks } from '../services/stockSearchCache';
 
 interface StockSearchInputProps {
   initialQuery?: string;
@@ -35,6 +35,10 @@ export default function StockSearchInput({
   const requestSeq = useRef(0);
 
   useEffect(() => {
+    maybeRefreshStockSearchIndex();
+  }, []);
+
+  useEffect(() => {
     setQuery(initialQuery);
   }, [initialQuery]);
 
@@ -49,10 +53,11 @@ export default function StockSearchInput({
 
     const seq = ++requestSeq.current;
     const timer = window.setTimeout(async () => {
-      setLoading(true);
+      setLoading(false);
       try {
-        const response = await api.searchStocks(trimmed, limit);
+        const cache = await getStockSearchIndex();
         if (requestSeq.current !== seq) return;
+        const response = searchCachedStocks(trimmed, cache.items, limit);
 
         setResults(response.matches);
         if (response.matches.length === 0) {

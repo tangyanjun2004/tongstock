@@ -169,6 +169,21 @@ export interface SearchStockMatch {
   matchType: string;
 }
 
+export interface StockSearchIndexItem {
+  code: string;
+  name: string;
+  exchange: string;
+  nameNorm: string;
+  pinyin: string;
+  initials: string;
+}
+
+export interface StockSearchIndexResponse {
+  updatedAt: number;
+  total: number;
+  items: StockSearchIndexItem[];
+}
+
 export interface StockSearchResponse {
   query: string;
   total: number;
