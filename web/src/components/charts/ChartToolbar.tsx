@@ -31,6 +31,8 @@ const SUB_PANELS = [
   { value: 'RSI', label: 'RSI' },
 ];
 
+const labelStyle = { whiteSpace: 'nowrap' } as const;
+
 export default function ChartToolbar({
   ktype,
   onKtypeChange,
@@ -40,12 +42,20 @@ export default function ChartToolbar({
   onSubPanelChange,
 }: Props) {
   return (
-    <Space direction="vertical" size={12} style={{ display: 'flex' }}>
-      <Segmented options={KTYPES} value={ktype} onChange={(value) => onKtypeChange(String(value))} block />
-      <Space wrap size={16} align="center">
-        <Space size={8} align="center">
-          <Typography.Text type="secondary">主图</Typography.Text>
+    <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
+      <Space size={18} align="center" wrap={false} style={{ minWidth: 'max-content' }}>
+        <Space size={8} align="center" wrap={false}>
+          <Typography.Text type="secondary" style={labelStyle}>
+            K线
+          </Typography.Text>
+          <Segmented size="small" options={KTYPES} value={ktype} onChange={(value) => onKtypeChange(String(value))} />
+        </Space>
+        <Space size={8} align="center" wrap={false}>
+          <Typography.Text type="secondary" style={labelStyle}>
+            主图
+          </Typography.Text>
           <Radio.Group
+            size="small"
             optionType="button"
             buttonStyle="solid"
             options={MAIN_OVERLAYS}
@@ -53,9 +63,12 @@ export default function ChartToolbar({
             onChange={(event) => onMainOverlayChange(event.target.value === mainOverlay ? '' : event.target.value)}
           />
         </Space>
-        <Space size={8} align="center">
-          <Typography.Text type="secondary">副图</Typography.Text>
+        <Space size={8} align="center" wrap={false}>
+          <Typography.Text type="secondary" style={labelStyle}>
+            副图
+          </Typography.Text>
           <Radio.Group
+            size="small"
             optionType="button"
             buttonStyle="solid"
             options={SUB_PANELS}
@@ -64,6 +77,6 @@ export default function ChartToolbar({
           />
         </Space>
       </Space>
-    </Space>
+    </div>
   );
 }
