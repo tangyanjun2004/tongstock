@@ -12,3 +12,5 @@ tmp
 # Web dependencies
 web/node_modules
 web/.vite
+
+*.exe
