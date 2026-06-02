@@ -1,0 +1,62 @@
+# Go 相关
+go.mod
+go.sum
+*.go
+!cmd/
+!pkg/
+
+# 前端相关
+web/node_modules/
+web/.vite/
+web/dist/
+
+# 测试和临时文件
+*.test
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# 日志文件
+*.log
+logs/
+
+# 数据文件
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 配置文件
+.env
+.env.local
+.env.*.local
+
+# Docker 相关
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# IDE 相关
+.vscode/
+.idea/
+*.iml
+
+# Git 相关
+.git/
+.gitignore
+
+# 其他
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Air 热重载
+.air.toml
+.air/
+
+# Makefile
+Makefile

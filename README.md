@@ -24,6 +24,9 @@
 
 ## 安装
 
+### 方法一：源码方式（需要 Go 1.24+ 和 pnpm）
+
+#### linux上安装
 ```bash
 # 克隆项目
 git clone https://github.com/sjzsdu/tongstock.git
@@ -37,6 +40,69 @@ pnpm install
 make server
 make cli
 ```
+#### windows上安装
+##### 步骤一:官方安装包
+
+1. **下载Go安装包**
+   - 访问官网：https://golang.org/dl/
+   - 或国内镜像：https://golang.google.cn/dl/
+   - 选择最新版本的Windows安装包（如：go1.21.x.windows-amd64.msi）
+
+2. **运行安装程序**
+   - 双击下载的.msi文件
+   - 按照向导完成安装
+   - 默认安装路径：`C:\Program Files\Go`
+
+3. **验证安装**
+   打开新的PowerShell窗口，运行：
+   ```powershell
+   go version
+   ```
+   应该显示类似：`go version go1.21.x windows/amd64`
+
+##### 步骤二:安装本项目
+```bash
+# 克隆项目
+git clone https://github.com/sjzsdu/tongstock.git
+cd tongstock
+
+# 构建前端项目（需要 pnpm）
+cd web
+pnpm build
+xcopy dist ../pkg/web/dist /E /I
+
+# 构建后端项目（需要 Go 1.24+ ）
+cd ../
+go build -o "tongstock-cli.exe" ./cmd/cli/main.go
+go build -o "tongstock-server.exe" ./cmd/server/main.go
+
+# 把exe放到用户目录下
+copy tongstock-cli.exe %USERPROFILE%\.tongstock\
+copy tongstock-server.exe %USERPROFILE%\.tongstock\
+```
+
+
+### 方法二：Docker 方式（推荐，无需安装依赖）
+
+```bash
+# 克隆项目
+git clone https://github.com/sjzsdu/tongstock.git
+cd tongstock
+
+# 使用 Docker Compose 构建并启动
+docker-compose up -d
+
+# 查看服务状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+**访问地址：** http://localhost:8080
 
 ## Skill 使用（推荐）
 
