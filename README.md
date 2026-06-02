@@ -60,7 +60,7 @@ make cli
    ```
    应该显示类似：`go version go1.21.x windows/amd64`
 
-##### 步骤二:安装本项目
+##### 步骤二:使用源码编译并安装本项目
 ```bash
 # 克隆项目
 git clone https://github.com/sjzsdu/tongstock.git
@@ -81,6 +81,24 @@ copy tongstock-cli.exe %USERPROFILE%\.tongstock\
 copy tongstock-server.exe %USERPROFILE%\.tongstock\
 ```
 
+##### 步骤二:直接使用Release页面的编译好的exe
+1. 如果你不想折腾源码，可以直接到Release页面下载编辑好的zip包，里面含有`tongstockcli.exe`和`tongstockserver.exe`两个文件。
+2. 把这两个文件放到`%USERPROFILE%\.tongstock\`下，可以使用以下命令运行
+```bash
+cd %USERPROFILE%\.tongstock\
+./tongstockserver.exe
+```
+3. 此时会自动产生`config.yaml`和`indicator.yaml`文件。
+4. 建议将`config.yaml`里面的`cache`类型设置为`file`，同时把`dir`和`dsn`设置为绝对路径（可以为了防止错误）。
+5. 如果想要把`tongstockserver.exe`做成一个windows服务，开机就可以启动，可以新建一个`serverstart.bat`文件，内容为
+```bash
+set GIN_MODE=release
+tongstockserver.exe
+```
+6. 使用nssm创建一个windows服务（nssm可以在windows应用商店下载），使用以下命令创建服务，并填写配置信息。如何配置自行搜索吧。
+```bash
+nssm install TDXStock
+```
 
 ### 方法二：Docker 方式（推荐，无需安装依赖）
 
