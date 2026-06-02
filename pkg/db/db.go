@@ -3,11 +3,11 @@ package db
 import (
 	"database/sql"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Open opens a database connection based on the driver name and DSN.
-// driver: "sqlite3", "postgres", "mysql", etc.
+// driver: "sqlite", "postgres", "mysql", etc.
 // dsn: database-specific connection string
 func Open(driver, dsn string) (*sql.DB, error) {
 	db, err := sql.Open(driver, dsn)
@@ -22,7 +22,7 @@ func Open(driver, dsn string) (*sql.DB, error) {
 
 // OpenSQLite opens a SQLite database
 func OpenSQLite(dsn string) (*sql.DB, error) {
-	return Open("sqlite3", dsn)
+	return Open("sqlite", dsn)
 }
 
 // OpenPostgres opens a PostgreSQL database

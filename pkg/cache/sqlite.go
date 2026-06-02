@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type sqliteCache struct {
@@ -15,7 +15,7 @@ type sqliteCache struct {
 
 // NewSQLiteCache 创建基于 SQLite 的缓存实例
 func NewSQLiteCache(dbPath string) (Cache, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?cache=shared")
+	db, err := sql.Open("sqlite", dbPath+"?cache=shared")
 	if err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ func DefaultConfig() *Config {
 		Server:   ServerConfig{Port: 8080},
 		TDX:      TDXConfig{Hosts: nil},
 		Cache:    CacheConfig{Backend: "sqlite", Dir: CacheDir()},
-		Database: DatabaseConfig{Driver: "sqlite3", DSN: DBPath()},
+		Database: DatabaseConfig{Driver: "sqlite", DSN: DBPath()},
 	}
 }
 
@@ -73,8 +73,8 @@ cache:
 
 # 数据库配置 (用于 K 线、交易日历等)
 database:
-  # 驱动: sqlite3, postgres, mysql
-  driver: sqlite3
+  # 驱动: sqlite, postgres, mysql
+  driver: sqlite
   # 连接字符串
   # dsn: ~/.tongstock/cache/tongstock.db
 `

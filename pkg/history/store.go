@@ -11,7 +11,7 @@ type DB struct {
 }
 
 func Open(dbPath string) (*DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?cache=shared&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?cache=shared&_busy_timeout=5000")
 	if err != nil {
 		return nil, err
 	}
