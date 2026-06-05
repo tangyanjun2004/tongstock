@@ -216,6 +216,10 @@ func resolveStockCodeOrRespond(c *gin.Context, raw string) (string, bool) {
 		return "", false
 	}
 	if !resolved {
+		//如果输入的查询与第一个匹配项的代码完全匹配（不区分大小写），或者与交易所+代码匹配，说明查出来的有股票有指数，则直接返回该代码
+		if query == matches[0].Code || query == matches[0].Exchange+matches[0].Code || query == strings.ToUpper(matches[0].Exchange)+matches[0].Code {
+			return query, true
+		}
 		c.JSON(http.StatusConflict, stockSearchErrorResponse{Error: "找到多个匹配股票，请先选择具体个股", Query: query, Total: len(matches), Matches: matches})
 		return "", false
 	}
