@@ -397,6 +397,52 @@ func normalizeStockCodeQuery(input string) string {
 	return input
 }
 
+// classifyCode 根据代码前缀分类证券
+func classifyCode(code string) string {
+	// 北交所: 8开头
+	if strings.HasPrefix(code, "8") {
+		return "北交所股票"
+	}
+	// 指数: 399开头
+	if strings.HasPrefix(code, "399") {
+		return "指数"
+	}
+	// 创业板: 300开头
+	if strings.HasPrefix(code, "300") {
+		return "创业板"
+	}
+	// 科创板: 688开头
+	if strings.HasPrefix(code, "688") {
+		return "科创板"
+	}
+	// 上证股票: 600/601/603开头
+	if strings.HasPrefix(code, "6") {
+		return "沪市A股"
+	}
+	// 深市主板: 000开头
+	if strings.HasPrefix(code, "0") {
+		return "深市主板"
+	}
+	// 基金: 1开头
+	if strings.HasPrefix(code, "1") {
+		return "基金"
+	}
+	// ETF: 5开头
+	if strings.HasPrefix(code, "5") {
+		return "ETF"
+	}
+	// 债券: 2开头
+	if strings.HasPrefix(code, "2") {
+		return "债券"
+	}
+	// REITs: 8开头(非北交所)
+	if strings.HasPrefix(code, "9") {
+		return "REITs"
+	}
+
+	return "其他"
+}
+
 func main() {
 	port := flag.Int("port", 0, "服务端口 (默认从配置文件读取)")
 	flag.Usage = func() {
@@ -462,6 +508,8 @@ func main() {
 	r.GET("/api/quote", handleQuote)
 	r.GET("/api/kline", handleKline)
 	r.GET("/api/codes", handleCodes)
+	r.GET("/api/codes/list", handleCodesList)
+	r.GET("/api/codes/stats", handleCodesStats)
 	r.GET("/api/minute", handleMinute)
 	r.GET("/api/trade", handleTrade)
 	r.GET("/api/xdxr", handleXdXr)
@@ -495,6 +543,11 @@ func main() {
 	dist := webstatic.DistFileServer()
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
+		// 对 API 路径返回 404 而不是 HTML
+		if strings.HasPrefix(path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API 接口不存在", "path": path})
+			return
+		}
 		if path == "/" || path == "/index.html" {
 			dist.ServeHTTP(c.Writer, c.Request)
 			return
@@ -634,6 +687,162 @@ func handleCodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, codes)
+}
+
+// handleCodesList 处理 /api/codes/list 接口
+func handleCodesList(c *gin.Context) {
+	exchangeStr := c.DefaultQuery("exchange", "sz")
+	exchange := protocol.ParseExchange(exchangeStr)
+	category := c.Query("category")
+
+	codes, err := withRetry(func() ([]*protocol.CodeItem, error) {
+		s, e := getService()
+		if e != nil {
+			return nil, e
+		}
+		return s.FetchCodes(exchange)
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取代码失败: %v", err)})
+		return
+	}
+
+	// 分类过滤
+	var filtered []*protocol.CodeItem
+	if category != "" && category != "all" {
+		for _, c := range codes {
+			cat := classifyCode(c.Code)
+			shouldInclude := false
+			switch category {
+			case "stock":
+				shouldInclude = cat == "沪市A股" || cat == "深市主板" || cat == "创业板" || cat == "科创板" || cat == "北交所股票"
+			case "fund":
+				shouldInclude = cat == "基金"
+			case "etf":
+				shouldInclude = cat == "ETF"
+			case "bond":
+				shouldInclude = cat == "债券"
+			case "index":
+				shouldInclude = cat == "指数"
+			case "gem":
+				shouldInclude = cat == "创业板"
+			}
+			if shouldInclude {
+				filtered = append(filtered, c)
+			}
+		}
+	} else {
+		filtered = codes
+	}
+
+	// 构建响应格式
+	type CodeResponse struct {
+		Code     string `json:"code"`
+		Name     string `json:"name"`
+		Cat      string `json:"cat"`
+		Exchange string `json:"exchange"`
+	}
+
+	exchangeNameMap := map[string]string{"sz": "深圳交易所", "sh": "上海交易所", "bj": "北京交易所"}
+	exchangeLabel := exchangeNameMap[exchangeStr]
+	if exchangeLabel == "" {
+		exchangeLabel = "未知交易所"
+	}
+
+	respCodes := make([]CodeResponse, 0, len(filtered))
+	for _, code := range filtered {
+		respCodes = append(respCodes, CodeResponse{
+			Code:     code.Code,
+			Name:     code.Name,
+			Cat:      classifyCode(code.Code),
+			Exchange: exchangeLabel,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"exchange": exchangeStr,
+		"category": category,
+		"total":    len(respCodes),
+		"codes":    respCodes,
+	})
+}
+
+// handleCodesStats 处理 /api/codes/stats 接口
+func handleCodesStats(c *gin.Context) {
+	exchangeStr := c.DefaultQuery("exchange", "sz")
+	allExchanges := c.DefaultQuery("all", "false") == "true"
+
+	type StatsResponse struct {
+		Exchange   string         `json:"exchange"`
+		Name       string         `json:"name"`
+		Total      int            `json:"total"`
+		Categories map[string]int `json:"categories"`
+	}
+
+	var stats []StatsResponse
+
+	exchangeNameMap := map[string]string{"sz": "深圳交易所", "sh": "上海交易所", "bj": "北京交易所"}
+
+	if allExchanges {
+		// 获取所有交易所的统计
+		exchanges := []string{"sz", "sh", "bj"}
+
+		for _, exch := range exchanges {
+			exchange := protocol.ParseExchange(exch)
+			codes, err := withRetry(func() ([]*protocol.CodeItem, error) {
+				s, e := getService()
+				if e != nil {
+					return nil, e
+				}
+				return s.FetchCodes(exchange)
+			})
+			if err != nil {
+				continue
+			}
+
+			catStats := make(map[string]int)
+			for _, code := range codes {
+				cat := classifyCode(code.Code)
+				catStats[cat]++
+			}
+
+			stats = append(stats, StatsResponse{
+				Exchange:   exch,
+				Name:       exchangeNameMap[exch],
+				Total:      len(codes),
+				Categories: catStats,
+			})
+		}
+	} else {
+		// 单个交易所统计
+		exchange := protocol.ParseExchange(exchangeStr)
+		codes, err := withRetry(func() ([]*protocol.CodeItem, error) {
+			s, e := getService()
+			if e != nil {
+				return nil, e
+			}
+			return s.FetchCodes(exchange)
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取代码失败: %v", err)})
+			return
+		}
+
+		catStats := make(map[string]int)
+		for _, code := range codes {
+			cat := classifyCode(code.Code)
+			catStats[cat]++
+		}
+
+		stats = append(stats, StatsResponse{
+			Exchange:   exchangeStr,
+			Name:       exchangeNameMap[exchangeStr],
+			Total:      len(codes),
+			Categories: catStats,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"stats": stats})
 }
 
 func handleMinute(c *gin.Context) {
