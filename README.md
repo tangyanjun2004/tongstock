@@ -460,7 +460,7 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
 | `/api/finance` | GET | `code` | 财务数据 |
 | `/api/index` | GET | `code`, `type` | 指数K线 |
 | `/api/company` | GET | `code` | 公司信息目录(F10) |
-| `/api/company/content` | GET | `code`, `filename` | 公司信息内容 |
+| `/api/company/content` | GET | `code`, `block` | 公司信息内容, block使用api/company中返回块 |
 | `/api/block` | GET | `file` | 板块分类(传统) |
 | `/api/block/files` | GET | - | 板块文件列表 |
 | `/api/block/list` | GET | `file`, `type`, `sort` | 结构化板块列表 |
