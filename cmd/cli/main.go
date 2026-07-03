@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sjzsdu/tongstock/cmd/common"
 	"github.com/sjzsdu/tongstock/pkg/config"
 	"github.com/sjzsdu/tongstock/pkg/param"
 	"github.com/sjzsdu/tongstock/pkg/signal"
@@ -127,76 +128,21 @@ func runIndicator(cmd *cobra.Command, args []string) error {
 	result := ta.Calculate(inputs, cfg)
 	signals := signal.Detect(indicatorCode, inputs, result, nil)
 
-	if indicatorJSON {
-		return outputIndicatorJSON(indicatorCode, inputs, result, indicatorDays)
-	}
-
-	return outputIndicatorTable(indicatorCode, string(category), inputs, result, signals)
-}
-
-func outputIndicatorJSON(code string, inputs []ta.KlineInput, result *ta.IndicatorResult, days int) error {
-	n := len(inputs)
-	if n == 0 {
-		return fmt.Errorf("无数据")
-	}
-
-	stockName := code
+	stockName := indicatorCode
 	quotes, err := func() ([]*protocol.QuoteItem, error) {
 		svc, err := dialService()
 		if err != nil {
 			return nil, err
 		}
 		defer svc.Close()
-		return svc.Client.GetQuote(code)
+		return svc.Client.GetQuote(indicatorCode)
 	}()
 	if err == nil && len(quotes) > 0 {
 		stockName = quotes[0].Name
 	}
 
-	if days < 1 {
-		days = 1
-	}
-	if days > n {
-		days = n
-	}
-
-	startIdx := n - days
-
-	if days == 1 {
-		last := inputs[n-1]
-		var change, changePct float64
-		if n > 1 {
-			change = last.Close - inputs[n-2].Close
-			if inputs[n-2].Close > 0 {
-				changePct = change / inputs[n-2].Close * 100
-			}
-		}
-
-		trend := calcTrend(result, n-1)
-		macdSignal := calcMACDSignal(result, n-1)
-		kdjSignal := calcKDJSignal(result, n-1)
-		rsiSignal := calcRSISignal(result, n-1)
-		bollSignal, bollPosition := calcBOLLSignal(result, inputs[n-1], n-1)
-
-		jsonOutput := map[string]interface{}{
-			"code":      code,
-			"name":      stockName,
-			"timestamp": last.Time.Format("2006-01-02"),
-			"price": map[string]interface{}{
-				"current":    last.Close,
-				"change":     change,
-				"change_pct": changePct,
-			},
-			"ma":      buildMAData(result, n-1, trend),
-			"macd":    buildMACDData(result, n-1, macdSignal),
-			"kdj":     buildKDJData(result, n-1, kdjSignal),
-			"rsi":     buildRSIData(result, n-1, rsiSignal),
-			"boll":    buildBOLLData(result, n-1, bollSignal, bollPosition),
-			"volume":  buildVolumeData(result),
-			"signals": buildSignals(macdSignal, kdjSignal, trend),
-			"summary": buildSummary(trend),
-		}
-
+	if indicatorJSON {
+		jsonOutput := common.OutputIndicatorJSON(indicatorCode, stockName, inputs, result, indicatorDays)
 		output, err := json.MarshalIndent(jsonOutput, "", "  ")
 		if err != nil {
 			return fmt.Errorf("JSON序列化失败: %w", err)
@@ -205,234 +151,7 @@ func outputIndicatorJSON(code string, inputs []ta.KlineInput, result *ta.Indicat
 		return nil
 	}
 
-	var history []map[string]interface{}
-	for i := startIdx; i < n; i++ {
-		dayData := inputs[i]
-		var change, changePct float64
-		if i > 0 {
-			change = dayData.Close - inputs[i-1].Close
-			if inputs[i-1].Close > 0 {
-				changePct = change / inputs[i-1].Close * 100
-			}
-		}
-
-		trend := calcTrend(result, i)
-		macdSignal := calcMACDSignal(result, i)
-		kdjSignal := calcKDJSignal(result, i)
-		rsiSignal := calcRSISignal(result, i)
-		bollSignal, bollPosition := calcBOLLSignal(result, dayData, i)
-
-		history = append(history, map[string]interface{}{
-			"timestamp": dayData.Time.Format("2006-01-02"),
-			"price": map[string]interface{}{
-				"current":    dayData.Close,
-				"change":     change,
-				"change_pct": changePct,
-			},
-			"ma":      buildMAData(result, i, trend),
-			"macd":    buildMACDData(result, i, macdSignal),
-			"kdj":     buildKDJData(result, i, kdjSignal),
-			"rsi":     buildRSIData(result, i, rsiSignal),
-			"boll":    buildBOLLData(result, i, bollSignal, bollPosition),
-			"signals": buildSignals(macdSignal, kdjSignal, trend),
-		})
-	}
-
-	latestTrend := calcTrend(result, n-1)
-	jsonOutput := map[string]interface{}{
-		"code":    code,
-		"name":    stockName,
-		"days":    days,
-		"count":   len(history),
-		"history": history,
-		"summary": buildSummary(latestTrend),
-	}
-
-	output, err := json.MarshalIndent(jsonOutput, "", "  ")
-	if err != nil {
-		return fmt.Errorf("JSON序列化失败: %w", err)
-	}
-	fmt.Println(string(output))
-	return nil
-}
-
-func calcTrend(result *ta.IndicatorResult, idx int) string {
-	if ma5, ok := result.MA["5"]; ok {
-		if ma20, ok2 := result.MA["20"]; ok2 && idx >= 0 {
-			if ma5[idx] > ma20[idx] {
-				return "bullish"
-			} else if ma5[idx] < ma20[idx] {
-				return "bearish"
-			}
-		}
-	}
-	return "neutral"
-}
-
-func calcMACDSignal(result *ta.IndicatorResult, idx int) string {
-	if result.MACD != nil && idx >= 0 {
-		if result.MACD.DIF[idx] > result.MACD.DEA[idx] {
-			return "golden_cross"
-		} else if result.MACD.DIF[idx] < result.MACD.DEA[idx] {
-			return "death_cross"
-		}
-	}
-	return "neutral"
-}
-
-func calcKDJSignal(result *ta.IndicatorResult, idx int) string {
-	if result.KDJ != nil && idx >= 0 {
-		if result.KDJ.J[idx] > 100 {
-			return "overbought"
-		} else if result.KDJ.J[idx] < 0 {
-			return "oversold"
-		}
-	}
-	return "neutral"
-}
-
-func calcRSISignal(result *ta.IndicatorResult, idx int) string {
-	if rsi6, ok := result.RSI["6"]; ok && idx >= 0 {
-		if rsi6[idx] > 80 {
-			return "overbought"
-		} else if rsi6[idx] < 20 {
-			return "oversold"
-		}
-	}
-	return "neutral"
-}
-
-func calcBOLLSignal(result *ta.IndicatorResult, day ta.KlineInput, idx int) (string, float64) {
-	signal := "normal"
-	position := 0.0
-	if result.BOLL != nil && idx >= 0 {
-		upper := result.BOLL.Upper[idx]
-		lower := result.BOLL.Lower[idx]
-		if upper > lower {
-			position = (day.Close - lower) / (upper - lower)
-		}
-		if day.Close > upper {
-			signal = "break_upper"
-		} else if day.Close < lower {
-			signal = "break_lower"
-		}
-	}
-	return signal, position
-}
-
-func buildMAData(result *ta.IndicatorResult, idx int, trend string) map[string]interface{} {
-	m := map[string]interface{}{"trend": trend}
-	for _, p := range []string{"5", "10", "20", "60", "120"} {
-		if v, ok := result.MA[p]; ok && idx >= 0 && idx < len(v) {
-			m["ma"+p] = v[idx]
-		}
-	}
-	return m
-}
-
-func buildMACDData(result *ta.IndicatorResult, idx int, signal string) map[string]interface{} {
-	if result.MACD == nil || idx < 0 || idx >= len(result.MACD.DIF) {
-		return nil
-	}
-	return map[string]interface{}{
-		"dif":    result.MACD.DIF[idx],
-		"dea":    result.MACD.DEA[idx],
-		"hist":   result.MACD.Hist[idx],
-		"signal": signal,
-	}
-}
-
-func buildKDJData(result *ta.IndicatorResult, idx int, signal string) map[string]interface{} {
-	if result.KDJ == nil || idx < 0 || idx >= len(result.KDJ.K) {
-		return nil
-	}
-	return map[string]interface{}{
-		"k":      result.KDJ.K[idx],
-		"d":      result.KDJ.D[idx],
-		"j":      result.KDJ.J[idx],
-		"signal": signal,
-	}
-}
-
-func buildRSIData(result *ta.IndicatorResult, idx int, signal string) map[string]interface{} {
-	if len(result.RSI) == 0 || idx < 0 {
-		return nil
-	}
-	m := map[string]interface{}{"signal": signal}
-	for p, v := range result.RSI {
-		if idx < len(v) {
-			m["rsi"+p] = v[idx]
-		}
-	}
-	return m
-}
-
-func buildBOLLData(result *ta.IndicatorResult, idx int, signal string, position float64) map[string]interface{} {
-	if result.BOLL == nil || idx < 0 || idx >= len(result.BOLL.Upper) {
-		return nil
-	}
-	return map[string]interface{}{
-		"upper":    result.BOLL.Upper[idx],
-		"middle":   result.BOLL.Middle[idx],
-		"lower":    result.BOLL.Lower[idx],
-		"position": position,
-		"signal":   signal,
-	}
-}
-
-func buildVolumeData(result *ta.IndicatorResult) map[string]interface{} {
-	if result.VolumeRatio == nil {
-		return nil
-	}
-	return map[string]interface{}{
-		"current": result.VolumeRatio.Current,
-		"avg5":    result.VolumeRatio.Avg5,
-		"ratio":   result.VolumeRatio.Ratio,
-		"signal":  result.VolumeRatio.Signal,
-	}
-}
-
-func buildSignals(macdSignal, kdjSignal, trend string) []string {
-	var s []string
-	if macdSignal == "golden_cross" {
-		s = append(s, "golden_cross")
-	}
-	if macdSignal == "death_cross" {
-		s = append(s, "death_cross")
-	}
-	if kdjSignal == "overbought" {
-		s = append(s, "overbought")
-	}
-	if kdjSignal == "oversold" {
-		s = append(s, "oversold")
-	}
-	if trend == "bullish" {
-		s = append(s, "多头排列")
-	}
-	if trend == "bearish" {
-		s = append(s, "空头排列")
-	}
-	return s
-}
-
-func buildSummary(trend string) map[string]interface{} {
-	signal := "持有"
-	if trend == "bullish" {
-		signal = "买入"
-	} else if trend == "bearish" {
-		signal = "卖出"
-	}
-	strength := 50
-	if trend == "bullish" {
-		strength = 70
-	} else if trend == "bearish" {
-		strength = 30
-	}
-	return map[string]interface{}{
-		"trend":    trend,
-		"signal":   signal,
-		"strength": strength,
-	}
+	return outputIndicatorTable(indicatorCode, string(category), inputs, result, signals)
 }
 
 func outputIndicatorTable(code, category string, inputs []ta.KlineInput, result *ta.IndicatorResult, signals []signal.Signal) error {
@@ -747,52 +466,6 @@ func runQuote(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// classifyCode 根据代码前缀分类证券
-func classifyCode(code string) string {
-	// 北交所: 8开头
-	if strings.HasPrefix(code, "8") {
-		return "北交所股票"
-	}
-	// 指数: 399开头
-	if strings.HasPrefix(code, "399") {
-		return "指数"
-	}
-	// 创业板: 300开头
-	if strings.HasPrefix(code, "300") {
-		return "创业板"
-	}
-	// 科创板: 688开头
-	if strings.HasPrefix(code, "688") {
-		return "科创板"
-	}
-	// 上证股票: 600/601/603开头
-	if strings.HasPrefix(code, "6") {
-		return "沪市A股"
-	}
-	// 深市主板: 000开头
-	if strings.HasPrefix(code, "0") {
-		return "深市主板"
-	}
-	// 基金: 1开头
-	if strings.HasPrefix(code, "1") {
-		return "基金"
-	}
-	// ETF: 5开头
-	if strings.HasPrefix(code, "5") {
-		return "ETF"
-	}
-	// 债券: 2开头
-	if strings.HasPrefix(code, "2") {
-		return "债券"
-	}
-	// REITs: 8开头(非北交所)
-	if strings.HasPrefix(code, "9") {
-		return "REITs"
-	}
-
-	return "其他"
-}
-
 var codesExchange string
 var codesCategory string
 var codesStats bool
@@ -854,7 +527,7 @@ func runCodesStats(cmd *cobra.Command, args []string) error {
 		// 统计各类别
 		stats := make(map[string]int)
 		for _, c := range codes {
-			cat := classifyCode(c.Code)
+			cat := common.ClassifyCode(c.Code)
 			stats[cat]++
 		}
 
@@ -886,7 +559,7 @@ func runCodesList(cmd *cobra.Command, args []string) error {
 	var filtered []*protocol.CodeItem
 	if codesCategory != "" && codesCategory != "all" {
 		for _, c := range codes {
-			cat := classifyCode(c.Code)
+			cat := common.ClassifyCode(c.Code)
 			shouldInclude := false
 			switch codesCategory {
 			case "stock":
@@ -919,7 +592,7 @@ func runCodesList(cmd *cobra.Command, args []string) error {
 
 	exchName := map[string]string{"sz": "深交所", "sh": "上交所", "bj": "北交所"}[codesExchange]
 	for _, code := range filtered {
-		cat := classifyCode(code.Code)
+		cat := common.ClassifyCode(code.Code)
 		fmt.Printf("%s %s [%s] %s\n", code.Code, code.Name, cat, exchName)
 	}
 	return nil
