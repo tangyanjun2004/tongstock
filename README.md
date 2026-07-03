@@ -385,7 +385,7 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
   "history": [
     {
     "timestamp": "2026-03-29",
-    "price": { "current": 12.58, "change": 0.45, "change_pct": 3.71 },
+    "kline": { "open":12.58, "high": 13.21, "low":11.28, "close": 12.58, "volume":125000 , "amount":98000 ,"change": 0.45, "change_pct": 3.71 },
     "ma": { "ma5": 12.32, "ma10": 12.18, "ma20": 11.95, "ma60": 11.50, "ma120": 11.20, "trend": "bullish" },
     "macd": { "dif": 0.35, "dea": 0.22, "hist": 0.26, "signal": "golden_cross" },
     "kdj": { "k": 72.5, "d": 68.2, "j": 81.1, "signal": "overbought" },
@@ -407,11 +407,11 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
   "days": 5,
   "count": 5,
   "history": [
-    { "timestamp": "2026-03-25", "price": {...}, "ma": {...}, ... },
-    { "timestamp": "2026-03-26", "price": {...}, "ma": {...}, ... },
-    { "timestamp": "2026-03-27", "price": {...}, "ma": {...}, ... },
-    { "timestamp": "2026-03-28", "price": {...}, "ma": {...}, ... },
-    { "timestamp": "2026-03-29", "price": {...}, "ma": {...}, ... }
+    { "timestamp": "2026-03-25", "kline": {...}, "ma": {...}, ... },
+    { "timestamp": "2026-03-26", "kline": {...}, "ma": {...}, ... },
+    { "timestamp": "2026-03-27", "kline": {...}, "ma": {...}, ... },
+    { "timestamp": "2026-03-28", "kline": {...}, "ma": {...}, ... },
+    { "timestamp": "2026-03-29", "kline": {...}, "ma": {...}, ... }
   ],
   "summary": { "trend": "上升趋势", "signal": "持有", "strength": 72 }
 }

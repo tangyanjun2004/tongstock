@@ -40,8 +40,13 @@ func OutputIndicatorJSON(code, stockName string, inputs []ta.KlineInput, result 
 
 		dayEntry := map[string]interface{}{
 			"timestamp": dayData.Time.Format("2006-01-02"),
-			"price": map[string]interface{}{
-				"current":    dayData.Close,
+			"kline": map[string]interface{}{
+				"open":       dayData.Open,
+				"high":       dayData.High,
+				"low":        dayData.Low,
+				"close":      dayData.Close,
+				"volume":     dayData.Volume,
+				"amount":     dayData.Amount,
 				"change":     change,
 				"change_pct": changePct,
 			},
@@ -50,6 +55,7 @@ func OutputIndicatorJSON(code, stockName string, inputs []ta.KlineInput, result 
 			"kdj":     BuildKDJData(result, i, kdjSignal),
 			"rsi":     BuildRSIData(result, i, rsiSignal),
 			"boll":    BuildBOLLData(result, i, bollSignal, bollPosition),
+			"volume":  BuildVolumeData(result),
 			"signals": BuildSignals(macdSignal, kdjSignal, trend),
 		}
 
