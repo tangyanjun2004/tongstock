@@ -380,15 +380,21 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
 {
   "code": "000001",
   "name": "平安银行",
-  "timestamp": "2026-03-29",
-  "price": { "current": 12.58, "change": 0.45, "change_pct": 3.71 },
-  "ma": { "ma5": 12.32, "ma10": 12.18, "ma20": 11.95, "ma60": 11.50, "ma120": 11.20, "trend": "bullish" },
-  "macd": { "dif": 0.35, "dea": 0.22, "hist": 0.26, "signal": "golden_cross" },
-  "kdj": { "k": 72.5, "d": 68.2, "j": 81.1, "signal": "overbought" },
-  "rsi": { "rsi6": 65.2, "rsi12": 62.8, "rsi24": 58.4, "signal": "neutral" },
-  "boll": { "upper": 13.20, "middle": 12.50, "lower": 11.80, "position": 0.65, "signal": "normal" },
-  "volume": { "current": 1250000, "avg5": 980000, "ratio": 1.28, "signal": "active" },
-  "signals": ["golden_cross", "overbought", "多头排列"],
+  "days": 1,
+  "count": 1,
+  "history": [
+    {
+    "timestamp": "2026-03-29",
+    "price": { "current": 12.58, "change": 0.45, "change_pct": 3.71 },
+    "ma": { "ma5": 12.32, "ma10": 12.18, "ma20": 11.95, "ma60": 11.50, "ma120": 11.20, "trend": "bullish" },
+    "macd": { "dif": 0.35, "dea": 0.22, "hist": 0.26, "signal": "golden_cross" },
+    "kdj": { "k": 72.5, "d": 68.2, "j": 81.1, "signal": "overbought" },
+    "rsi": { "rsi6": 65.2, "rsi12": 62.8, "rsi24": 58.4, "signal": "neutral" },
+    "boll": { "upper": 13.20, "middle": 12.50, "lower": 11.80, "position": 0.65, "signal": "normal" },
+    "volume": { "current": 1250000, "avg5": 980000, "ratio": 1.28, "signal": "active" },
+    "signals": ["golden_cross", "overbought", "多头排列"]
+    }
+  ],
   "summary": { "trend": "上升趋势", "signal": "持有", "strength": 72 }
 }
 ```

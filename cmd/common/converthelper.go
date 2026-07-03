@@ -21,44 +21,6 @@ func OutputIndicatorJSON(code, stockName string, inputs []ta.KlineInput, result 
 
 	startIdx := n - days
 
-	if days == 1 {
-		last := inputs[n-1]
-		var change, changePct float64
-		if n > 1 {
-			change = last.Close - inputs[n-2].Close
-			if inputs[n-2].Close > 0 {
-				changePct = change / inputs[n-2].Close * 100
-			}
-		}
-
-		trend := CalcTrend(result, n-1)
-		macdSignal := CalcMACDSignal(result, n-1)
-		kdjSignal := CalcKDJSignal(result, n-1)
-		rsiSignal := CalcRSISignal(result, n-1)
-		bollSignal, bollPosition := CalcBOLLSignal(result, inputs[n-1], n-1)
-
-		jsonOutput := map[string]interface{}{
-			"code":      code,
-			"name":      stockName,
-			"timestamp": last.Time.Format("2006-01-02"),
-			"price": map[string]interface{}{
-				"current":    last.Close,
-				"change":     change,
-				"change_pct": changePct,
-			},
-			"ma":      BuildMAData(result, n-1, trend),
-			"macd":    BuildMACDData(result, n-1, macdSignal),
-			"kdj":     BuildKDJData(result, n-1, kdjSignal),
-			"rsi":     BuildRSIData(result, n-1, rsiSignal),
-			"boll":    BuildBOLLData(result, n-1, bollSignal, bollPosition),
-			"volume":  BuildVolumeData(result),
-			"signals": BuildSignals(macdSignal, kdjSignal, trend),
-			"summary": BuildSummary(trend),
-		}
-
-		return jsonOutput
-	}
-
 	var history []map[string]interface{}
 	for i := startIdx; i < n; i++ {
 		dayData := inputs[i]
@@ -76,7 +38,7 @@ func OutputIndicatorJSON(code, stockName string, inputs []ta.KlineInput, result 
 		rsiSignal := CalcRSISignal(result, i)
 		bollSignal, bollPosition := CalcBOLLSignal(result, dayData, i)
 
-		history = append(history, map[string]interface{}{
+		dayEntry := map[string]interface{}{
 			"timestamp": dayData.Time.Format("2006-01-02"),
 			"price": map[string]interface{}{
 				"current":    dayData.Close,
@@ -89,7 +51,14 @@ func OutputIndicatorJSON(code, stockName string, inputs []ta.KlineInput, result 
 			"rsi":     BuildRSIData(result, i, rsiSignal),
 			"boll":    BuildBOLLData(result, i, bollSignal, bollPosition),
 			"signals": BuildSignals(macdSignal, kdjSignal, trend),
-		})
+		}
+
+		// 如果有成交量数据，添加到每日数据中
+		if i == n-1 {
+			dayEntry["volume"] = BuildVolumeData(result)
+		}
+
+		history = append(history, dayEntry)
 	}
 
 	latestTrend := CalcTrend(result, n-1)
