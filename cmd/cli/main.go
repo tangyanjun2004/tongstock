@@ -128,13 +128,13 @@ func runIndicator(cmd *cobra.Command, args []string) error {
 	signals := signal.Detect(indicatorCode, inputs, result, nil)
 
 	if indicatorJSON {
-		return outputIndicatorJSON(indicatorCode, inputs, result, signals)
+		return outputIndicatorJSON(indicatorCode, inputs, result, indicatorDays)
 	}
 
 	return outputIndicatorTable(indicatorCode, string(category), inputs, result, signals)
 }
 
-func outputIndicatorJSON(code string, inputs []ta.KlineInput, result *ta.IndicatorResult, signals []signal.Signal) error {
+func outputIndicatorJSON(code string, inputs []ta.KlineInput, result *ta.IndicatorResult, days int) error {
 	n := len(inputs)
 	if n == 0 {
 		return fmt.Errorf("无数据")
@@ -153,7 +153,6 @@ func outputIndicatorJSON(code string, inputs []ta.KlineInput, result *ta.Indicat
 		stockName = quotes[0].Name
 	}
 
-	days := indicatorDays
 	if days < 1 {
 		days = 1
 	}

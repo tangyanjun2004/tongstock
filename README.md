@@ -459,7 +459,8 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
 | `/api/block/files` | GET | - | 板块文件列表 |
 | `/api/block/list` | GET | `file`, `type`, `sort` | 结构化板块列表 |
 | `/api/block/show` | GET | `name`, `code`, `file` | 板块成分股/按股票查板块 |
-| `/api/indicator` | GET | `code`, `type`, `days` | 技术指标（MACD/KDJ/MA/BOLL/RSI/量比 + 信号），days参数可限制返回的K线数量 |
+| `/api/indicator` | GET | `code`, `type`, `days` | 技术指标（MACD/KDJ/MA/BOLL/RSI/量比 + 信号），days参数可限制返回的K线数量，不建议使用 |
+| `/api/indicator-filter` | GET | `code`, `type`, `days` | 技术指标（MACD/KDJ/MA/BOLL/RSI/量比 + 信号），返回跟cli一样的格式，days参数可限制所有返回的技术指标，便于AI使用 |
 | `/api/screen` | GET | `codes`, `type`, `signal` | 批量信号筛选 |
 
 ### 示例
