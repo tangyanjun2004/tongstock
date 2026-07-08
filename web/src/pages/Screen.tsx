@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
+import dayjs from 'dayjs';
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
@@ -14,6 +15,7 @@ import {
   Alert,
   Button,
   Card,
+  DatePicker,
   Empty,
   Flex,
   Input,
@@ -111,6 +113,38 @@ function stockNamesFromCodesCache(
     }
   }
   return results;
+}
+
+function formatDate(date: dayjs.Dayjs | null): string {
+  if (!date || !date.isValid()) return '';
+  return date.format('YYYYMMDD');
+}
+
+function getDefaultEndDay(): dayjs.Dayjs {
+  return dayjs();
+}
+
+function getDefaultStartDay(endDay: dayjs.Dayjs, ktype: string): dayjs.Dayjs {
+  switch (ktype) {
+    case 'day':
+    case '60m':
+    case '30m':
+    case '15m':
+    case '5m':
+    case '1m':
+      return endDay;
+    case 'week':
+      return endDay.startOf('week');
+    case 'month':
+      return endDay.startOf('month');
+    case 'quarter':
+      const quarterStart = Math.floor(endDay.month() / 3) * 3;
+      return endDay.year(endDay.year()).month(quarterStart).date(1).startOf('day');
+    case 'year':
+      return endDay.startOf('year');
+    default:
+      return endDay;
+  }
 }
 
 function formatPercent(value: number): string {
@@ -336,10 +370,21 @@ export default function Screen() {
   const [showBlockModal, setShowBlockModal] = useState(false);
   const [blockStocksWithNames, setBlockStocksWithNames] = useState<{ code: string; name: string }[]>([]);
   const [blockStocksLoadingNames, setBlockStocksLoadingNames] = useState(false);
+  const [startDay, setStartDay] = useState<dayjs.Dayjs | null>(null);
+  const [endDay, setEndDay] = useState<dayjs.Dayjs | null>(null);
 
   useEffect(() => {
     saveStockListToStorage(stockList);
   }, [stockList, saveStockListToStorage]);
+
+  useEffect(() => {
+    // 当 ktype 变化时重新设置日期和请求状态
+    const defaultEnd = getDefaultEndDay();
+    const defaultStart = getDefaultStartDay(defaultEnd, ktype);
+    setEndDay(defaultEnd);
+    setStartDay(defaultStart);
+    setHasRequested(false); // 允许重新请求数据
+  }, [ktype]);
 
   const preloadCodesCache = useCallback(async (): Promise<Record<string, CodesCacheEntry>> => {
     const exchanges = ['sz', 'sh', 'bj'] as const;
@@ -435,7 +480,9 @@ export default function Screen() {
     setLoading(true);
     setError('');
     try {
-      const response = await api.screen(codes, ktype);
+      const start = formatDate(startDay);
+      const end = formatDate(endDay);
+      const response = await api.screen(codes, ktype, '', start, end);
       const valid = response.results.filter((item) => item.code);
       setResults(valid);
       setTotal(response.total);
@@ -447,12 +494,21 @@ export default function Screen() {
     }
   };
 
+  const [hasRequested, setHasRequested] = useState(false);
+
   useEffect(() => {
     const codes = resolvedCodes.trim();
-    if (codes && !hasScreenLoaded && !loading) {
-      void doScreen();
+    if (codes && !hasRequested && !loading && startDay && endDay) {
+      // 标记已经请求过，防止重复请求
+      setHasRequested(true);
+      // 使用 setTimeout 确保状态更新后再执行请求，防止重复
+      const timer = setTimeout(() => {
+        void doScreen();
+      }, 0);
+      // 清理定时器
+      return () => clearTimeout(timer);
     }
-  }, [resolvedCodes, hasScreenLoaded, loading]);
+  }, [resolvedCodes, loading, startDay, endDay]);
 
   const filteredResults = useMemo(() => {
     if (selectedSignals.length === 0) return results;
@@ -758,24 +814,43 @@ export default function Screen() {
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Card>
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Flex justify="space-between" align="center" wrap="wrap" gap={12}>
-                  <Space wrap>
-                    <Text type="secondary">周期</Text>
-                    <Segmented
-                      value={ktype}
-                      onChange={(value) => setKtype(String(value))}
-                      options={KTYPE_OPTIONS}
-                    />
+                <Flex justify="space-between" align="flex-start" wrap="wrap" gap={12}>
+                  <Space vertical size={12} style={{ width: '100%', maxWidth: '1200px' }}>
+                    <Space wrap>
+                      <Text type="secondary">周期</Text>
+                      <Segmented
+                        value={ktype}
+                        onChange={(value) => setKtype(String(value))}
+                        options={KTYPE_OPTIONS}
+                      />
+                    </Space>
+
+                    <Space wrap style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Space wrap>
+                        <Text type="secondary">开始时间</Text>
+                        <DatePicker
+                          value={startDay || null}
+                          onChange={(date) => setStartDay(date)}
+                          format="YYYYMMDD"
+                        />
+                        <Text type="secondary">结束时间</Text>
+                        <DatePicker
+                          value={endDay || null}
+                          onChange={(date) => setEndDay(date)}
+                          format="YYYYMMDD"
+                        />
+                      </Space>
+                      <Button
+                        type="primary"
+                        icon={<SearchOutlined />}
+                        loading={loading}
+                        onClick={() => void doScreen()}
+                        disabled={!resolvedCodes.trim()}
+                      >
+                        开始筛选
+                      </Button>
+                    </Space>
                   </Space>
-                  <Button
-                    type="primary"
-                    icon={<SearchOutlined />}
-                    loading={loading}
-                    onClick={() => void doScreen()}
-                    disabled={!resolvedCodes.trim()}
-                  >
-                    开始筛选
-                  </Button>
                 </Flex>
 
                 <div>

@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react';
+import { ErrorBoundary } from 'react-error-boundary';
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { BarChartOutlined, DashboardOutlined, SearchOutlined, SettingOutlined, StockOutlined } from '@ant-design/icons';
 import { Avatar, Breadcrumb, Layout, Menu, Skeleton, Space, Typography } from 'antd';
@@ -102,19 +103,35 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ErrorFallback({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) {
+  return (
+    <div role="alert" style={{ padding: 24, textAlign: 'center' }}>
+      <h2>出错了</h2>
+      <pre style={{ whiteSpace: 'pre-wrap', marginTop: 16 }}>
+        {error instanceof Error ? error.message : String(error)}
+      </pre>
+      <button onClick={resetErrorBoundary} style={{ marginTop: 16, padding: '8px 16px' }}>
+        重试
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <AppLayout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/stock/choose" element={<StockChoose />} />
-          <Route path="/stock/:code" element={<StockDetail />} />
-          <Route path="/stock/:code/:tab" element={<StockDetail />} />
-          <Route path="/screen" element={<Screen />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
-      </AppLayout>
+      <ErrorBoundary FallbackComponent={ErrorFallback}>
+        <AppLayout>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/stock/choose" element={<StockChoose />} />
+            <Route path="/stock/:code" element={<StockDetail />} />
+            <Route path="/stock/:code/:tab" element={<StockDetail />} />
+            <Route path="/screen" element={<Screen />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </AppLayout>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

@@ -107,9 +107,11 @@ export const api = {
     return fetchJSON<{ stats: { exchange: string; name: string; total: number; categories: Record<string, number> }[] }>(`/api/codes/stats?${params}`);
   },
 
-  screen: (codes: string, type = 'day', signal?: string) => {
+  screen: (codes: string, type = 'day', signal?: string, startday?: string, endday?: string) => {
     const p = new URLSearchParams({ codes, type });
     if (signal) p.set('signal', signal);
+    if (startday) p.set('startday', startday);
+    if (endday) p.set('endday', endday);
     return fetchJSON<ScreenResponse>(`/api/screen?${p}`);
   },
 

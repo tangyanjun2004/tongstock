@@ -69,7 +69,7 @@ cd tongstock
 # 构建前端项目（需要 pnpm）
 cd web
 pnpm build
-xcopy dist ../pkg/web/dist /E /I
+xcopy "dist" "..\pkg\web\dist" /E /I
 
 # 构建后端项目（需要 Go 1.24+ ）
 cd ../
@@ -421,15 +421,17 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
 
 ```bash
 # 指定股票列表筛选
-./tongstock-cli screen --codes "000001,600519,000858" --type day --signal golden_cross
+./tongstock-cli screen --codes "000001,600519,000858" --type day --signal golden_cross  --startday=20260110  --endday=20260120
 
 # 从文件读取股票代码（每行一个）
-./tongstock-cli screen --file codes.txt --type day --signal oversold
+./tongstock-cli screen --file codes.txt --type day --signal oversold  --startday=20260220 
 
 # 设置并发池大小（默认10）
 ./tongstock-cli screen --codes "000001,600519" --pool 5
 
 # 可用信号类型: golden_cross, death_cross, overbought, oversold
+
+# startday和endday可以指定日期，endday未指定，默认是今日。startday未指定，则按照type，取该类型的第一天。如果是分钟级和日，那么startDay就是endday所在的这一天。如果是week，那么就是endday所在的周的星期一，如果是月，那就是endday所在月的第一天。对于季度和年依次类推。
 ```
 
 ## HTTP API 使用方法
@@ -467,7 +469,7 @@ npm run dev        # 启动开发服务器，默认代理到 localhost:8080
 | `/api/block/show` | GET | `name`, `code`, `file` | 板块成分股/按股票查板块 |
 | `/api/indicator` | GET | `code`, `type`, `days` | 技术指标（MACD/KDJ/MA/BOLL/RSI/量比 + 信号），days参数可限制返回的K线数量，不建议使用 |
 | `/api/indicator-filter` | GET | `code`, `type`, `days` | 技术指标（MACD/KDJ/MA/BOLL/RSI/量比 + 信号），返回跟cli一样的格式，days参数可限制所有返回的技术指标，便于AI使用 |
-| `/api/screen` | GET | `codes`, `type`, `signal` | 批量信号筛选 |
+| `/api/screen` | GET | `codes`, `type`, `signal`, `startday`, `endday`  | 从开始日期到结束日期之间批量信号筛选，如果传startday, endday将按照type自动推算开始和结束时间|
 
 ### 示例
 

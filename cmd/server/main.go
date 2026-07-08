@@ -1596,6 +1596,58 @@ func handleScreen(c *gin.Context) {
 	codesStr := c.Query("codes")
 	ktype := c.DefaultQuery("type", "day")
 	signalType := c.Query("signal")
+	startDayStr := c.Query("startday")
+	endDayStr := c.Query("endday")
+
+	// 根据 ktype 推算默认的 startday 和 endday
+	now := time.Now().In(time.FixedZone("CST", 8*3600))
+	var startDay, endDay string
+
+	// 计算 endDay
+	if endDayStr == "" {
+		endDay = now.Format("20060102")
+	} else {
+		endDay = endDayStr
+	}
+
+	// 计算 startDay
+	if startDayStr == "" {
+		endTime, err := time.Parse("20060102", endDay)
+		if err != nil {
+			endTime = now
+		}
+		switch tdx.ParseKlineType(ktype) {
+		case 7, 0, 1, 2, 3, 9: // 分钟级和日线
+			startDay = endDay // 同一天
+		case 5: // 周线
+			// 计算 endDay 所在周的星期一
+			weekday := endTime.Weekday()
+			if weekday == time.Sunday {
+				weekday = 7
+			}
+			offset := int(weekday - time.Monday)
+			monday := endTime.AddDate(0, 0, -offset)
+			startDay = monday.Format("20060102")
+		case 6: // 月线
+			// endDay 所在月的第一天
+			monthStart := time.Date(endTime.Year(), endTime.Month(), 1, 0, 0, 0, 0, endTime.Location())
+			startDay = monthStart.Format("20060102")
+		case 10: // 季度线
+			// 计算 endDay 所在季度的第一天
+			quarter := (int(endTime.Month()) - 1) / 3
+			quarterStartMonth := quarter*3 + 1
+			quarterStart := time.Date(endTime.Year(), time.Month(quarterStartMonth), 1, 0, 0, 0, 0, endTime.Location())
+			startDay = quarterStart.Format("20060102")
+		case 11: // 年线
+			// endDay 所在年的第一天
+			yearStart := time.Date(endTime.Year(), 1, 1, 0, 0, 0, 0, endTime.Location())
+			startDay = yearStart.Format("20060102")
+		default:
+			startDay = endDay // 默认同一天
+		}
+	} else {
+		startDay = startDayStr
+	}
 
 	if codesStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 codes 参数"})
@@ -1690,16 +1742,90 @@ func handleScreen(c *gin.Context) {
 			// 使用全量历史数据计算完整的交易周期
 			cycles := signal.DetectAllCycles(c, inputs, ind)
 
-			n := len(inputs)
+			// 根据 startDay 和 endDay 过滤 K 线数据
+			var filteredInputs []ta.KlineInput
+			var startIdx, endIdx int = -1, -1
+			for i, k := range inputs {
+				dateStr := k.Time.Format("20060102")
+				if dateStr >= startDay && dateStr <= endDay {
+					filteredInputs = append(filteredInputs, k)
+					if startIdx == -1 {
+						startIdx = i
+					}
+					endIdx = i
+				}
+			}
+
+			if len(filteredInputs) == 0 {
+				return
+			}
+
+			n := len(filteredInputs)
+
+			// 保留指标数组：从完整计算结果中截取过滤时间段内的数据
+			maLimited := make(map[string][]float64)
+			for key, values := range ind.MA {
+				if len(values) > 0 && endIdx < len(values) && startIdx >= 0 {
+					maLimited[key] = values[startIdx : endIdx+1]
+				}
+			}
+			// 保留 MACD 指标的过滤时间段内的数据
+			var macdLimited *ta.MACDResult
+			if ind.MACD != nil && endIdx < len(ind.MACD.DIF) && startIdx >= 0 {
+				macdLimited = &ta.MACDResult{
+					DIF:    ind.MACD.DIF[startIdx : endIdx+1],
+					DEA:    ind.MACD.DEA[startIdx : endIdx+1],
+					Hist:   ind.MACD.Hist[startIdx : endIdx+1],
+					Fast:   ind.MACD.Fast,
+					Slow:   ind.MACD.Slow,
+					Signal: ind.MACD.Signal,
+				}
+			}
+			// 保留 KDJ 指标的过滤时间段内的数据
+			var kdjLimited *ta.KDJResult
+			if ind.KDJ != nil && endIdx < len(ind.KDJ.K) && startIdx >= 0 {
+				kdjLimited = &ta.KDJResult{
+					K:  ind.KDJ.K[startIdx : endIdx+1],
+					D:  ind.KDJ.D[startIdx : endIdx+1],
+					J:  ind.KDJ.J[startIdx : endIdx+1],
+					N:  ind.KDJ.N,
+					M1: ind.KDJ.M1,
+					M2: ind.KDJ.M2,
+				}
+			}
+			// 过滤 Signals：只保留时间在 startDay 和 endDay 之间的信号
+			var filteredSignals []signal.Signal
+			for _, s := range sigs {
+				dateStr := s.Date.Format("20060102")
+				if dateStr >= startDay && dateStr <= endDay {
+					filteredSignals = append(filteredSignals, s)
+				}
+			}
+
+			// 过滤 Cycles：只保留时间在 startDay 和 endDay 之间的交易周期
+			var filteredCycles []signal.TradeCycle
+			for _, cycle := range cycles {
+				// 检查交易周期的买入日期或卖出日期是否在指定范围内
+				// TradeCycle 的日期格式是 "2006-01-02"，需要转换为 "20060102" 进行比较
+				buyDateStr := cycle.BuyDate[:4] + cycle.BuyDate[5:7] + cycle.BuyDate[8:10]
+				sellDateStr := cycle.SellDate[:4] + cycle.SellDate[5:7] + cycle.SellDate[8:10]
+
+				if (buyDateStr >= startDay && buyDateStr <= endDay) ||
+					(sellDateStr >= startDay && sellDateStr <= endDay) ||
+					(buyDateStr <= startDay && sellDateStr >= endDay) {
+					filteredCycles = append(filteredCycles, cycle)
+				}
+			}
+
 			r := result{
 				Code:    c,
 				Name:    stockName,
-				Last:    inputs[n-1],
-				MA:      ind.MA,
-				MACD:    ind.MACD,
-				KDJ:     ind.KDJ,
-				Signals: sigs,
-				Cycles:  cycles,
+				Last:    filteredInputs[n-1],
+				MA:      maLimited,
+				MACD:    macdLimited,
+				KDJ:     kdjLimited,
+				Signals: filteredSignals,
+				Cycles:  filteredCycles,
 			}
 
 			mu.Lock()
@@ -1877,6 +2003,16 @@ func handleSignalAnalysis(c *gin.Context) {
 		}
 		outcomes = append(outcomes, o)
 	}
+
+	// 按日期倒排，最新的在前面
+	sort.Slice(outcomes, func(i, j int) bool {
+		t1, err1 := time.Parse("2006-01-02", outcomes[i].Date)
+		t2, err2 := time.Parse("2006-01-02", outcomes[j].Date)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		return t2.After(t1)
+	})
 
 	type summary struct {
 		Type    string  `json:"type"`

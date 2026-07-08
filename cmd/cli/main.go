@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sjzsdu/tongstock/cmd/common"
 	"github.com/sjzsdu/tongstock/pkg/config"
@@ -267,6 +268,8 @@ var (
 	screenFile   string
 	screenSignal string
 	screenPool   int
+	screenStartDay string
+	screenEndDay string
 )
 
 var screenCmd = &cobra.Command{
@@ -281,10 +284,62 @@ func init() {
 	screenCmd.Flags().StringVarP(&screenFile, "file", "f", "", "股票代码文件路径（每行一个代码）")
 	screenCmd.Flags().StringVarP(&screenSignal, "signal", "s", "", "筛选信号类型: golden_cross/death_cross/overbought/oversold")
 	screenCmd.Flags().IntVarP(&screenPool, "pool", "p", 10, "并发池大小")
+	screenCmd.Flags().StringVarP(&screenStartDay, "startday", "S", "", "起始日期 (YYYYMMDD)")
+	screenCmd.Flags().StringVarP(&screenEndDay, "endday", "E", "", "结束日期 (YYYYMMDD)")
 }
 
 func runScreen(cmd *cobra.Command, args []string) error {
 	ktype := tdx.ParseKlineType(screenType)
+
+	// 根据 ktype 推算默认的 startday 和 endday
+	now := time.Now().In(time.FixedZone("CST", 8*3600))
+	var startDay, endDay string
+
+	// 计算 endDay
+	if screenEndDay == "" {
+		endDay = now.Format("20060102")
+	} else {
+		endDay = screenEndDay
+	}
+
+	// 计算 startDay
+	if screenStartDay == "" {
+		endTime, err := time.Parse("20060102", endDay)
+		if err != nil {
+			endTime = now
+		}
+		switch tdx.ParseKlineType(screenType) {
+		case 7, 0, 1, 2, 3, 9: // 分钟级和日线
+			startDay = endDay // 同一天
+		case 5: // 周线
+			// 计算 endDay 所在周的星期一
+			weekday := endTime.Weekday()
+			if weekday == time.Sunday {
+				weekday = 7
+			}
+			offset := int(weekday - time.Monday)
+			monday := endTime.AddDate(0, 0, -offset)
+			startDay = monday.Format("20060102")
+		case 6: // 月线
+			// endDay 所在月的第一天
+			monthStart := time.Date(endTime.Year(), endTime.Month(), 1, 0, 0, 0, 0, endTime.Location())
+			startDay = monthStart.Format("20060102")
+		case 10: // 季度线
+			// 计算 endDay 所在季度的第一天
+			quarter := (int(endTime.Month()) - 1) / 3
+			quarterStartMonth := quarter*3 + 1
+			quarterStart := time.Date(endTime.Year(), time.Month(quarterStartMonth), 1, 0, 0, 0, 0, endTime.Location())
+			startDay = quarterStart.Format("20060102")
+		case 11: // 年线
+			// endDay 所在年的第一天
+			yearStart := time.Date(endTime.Year(), 1, 1, 0, 0, 0, 0, endTime.Location())
+			startDay = yearStart.Format("20060102")
+		default:
+			startDay = endDay // 默认同一天
+		}
+	} else {
+		startDay = screenStartDay
+	}
 
 	// Parse code list
 	var codeList []string
@@ -356,6 +411,16 @@ func runScreen(cmd *cobra.Command, args []string) error {
 			cfg := param.Resolve(c, category)
 			ind := ta.Calculate(inputs, cfg)
 			sigs := signal.Detect(c, inputs, ind, nil)
+
+			// 过滤信号，只保留在 startDay 和 endDay 范围内的信号
+			var filteredSigs []signal.Signal
+			for _, s := range sigs {
+				dateStr := s.Date.Format("20060102")
+				if dateStr >= startDay && dateStr <= endDay {
+					filteredSigs = append(filteredSigs, s)
+				}
+			}
+			sigs = filteredSigs
 
 			results[idx] = screenResult{Code: c, Klines: inputs, Ind: ind, Signals: sigs}
 		}(i, code)
