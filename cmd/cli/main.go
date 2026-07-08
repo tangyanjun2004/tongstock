@@ -263,13 +263,13 @@ func outputIndicatorTable(code, category string, inputs []ta.KlineInput, result 
 }
 
 var (
-	screenType   string
-	screenCodes  string
-	screenFile   string
-	screenSignal string
-	screenPool   int
+	screenType     string
+	screenCodes    string
+	screenFile     string
+	screenSignal   string
+	screenPool     int
 	screenStartDay string
-	screenEndDay string
+	screenEndDay   string
 )
 
 var screenCmd = &cobra.Command{
@@ -422,7 +422,96 @@ func runScreen(cmd *cobra.Command, args []string) error {
 			}
 			sigs = filteredSigs
 
-			results[idx] = screenResult{Code: c, Klines: inputs, Ind: ind, Signals: sigs}
+			// 过滤 kline，只保留在 startDay 和 endDay 范围内的数据
+			var filteredInputs []ta.KlineInput
+			var filteredIndices []int
+			for i, k := range inputs {
+				dateStr := k.Time.Format("20060102")
+				if dateStr >= startDay && dateStr <= endDay {
+					filteredInputs = append(filteredInputs, k)
+					filteredIndices = append(filteredIndices, i)
+				}
+			}
+
+			// 过滤指标数据，只保留对应的索引位置
+			filteredInd := &ta.IndicatorResult{
+				MA:          make(map[string][]float64),
+				RSI:         make(map[string][]float64),
+				VolumeRatio: ind.VolumeRatio, // VolumeRatio 是单一值，不需要过滤
+			}
+
+			// 过滤 MA 数据
+			for period, values := range ind.MA {
+				var filteredValues []float64
+				for _, idx := range filteredIndices {
+					filteredValues = append(filteredValues, values[idx])
+				}
+				filteredInd.MA[period] = filteredValues
+			}
+
+			// 过滤 RSI 数据
+			for period, values := range ind.RSI {
+				var filteredValues []float64
+				for _, idx := range filteredIndices {
+					filteredValues = append(filteredValues, values[idx])
+				}
+				filteredInd.RSI[period] = filteredValues
+			}
+
+			// 过滤 MACD 数据
+			if ind.MACD != nil {
+				filteredMACD := &ta.MACDResult{
+					DIF:    make([]float64, len(filteredIndices)),
+					DEA:    make([]float64, len(filteredIndices)),
+					Hist:   make([]float64, len(filteredIndices)),
+					Fast:   ind.MACD.Fast,
+					Slow:   ind.MACD.Slow,
+					Signal: ind.MACD.Signal,
+				}
+				for i, idx := range filteredIndices {
+					filteredMACD.DIF[i] = ind.MACD.DIF[idx]
+					filteredMACD.DEA[i] = ind.MACD.DEA[idx]
+					filteredMACD.Hist[i] = ind.MACD.Hist[idx]
+				}
+				filteredInd.MACD = filteredMACD
+			}
+
+			// 过滤 KDJ 数据
+			if ind.KDJ != nil {
+				filteredKDJ := &ta.KDJResult{
+					K:  make([]float64, len(filteredIndices)),
+					D:  make([]float64, len(filteredIndices)),
+					J:  make([]float64, len(filteredIndices)),
+					N:  ind.KDJ.N,
+					M1: ind.KDJ.M1,
+					M2: ind.KDJ.M2,
+				}
+				for i, idx := range filteredIndices {
+					filteredKDJ.K[i] = ind.KDJ.K[idx]
+					filteredKDJ.D[i] = ind.KDJ.D[idx]
+					filteredKDJ.J[i] = ind.KDJ.J[idx]
+				}
+				filteredInd.KDJ = filteredKDJ
+			}
+
+			// 过滤 BOLL 数据
+			if ind.BOLL != nil {
+				filteredBOLL := &ta.BOLLResult{
+					Upper:  make([]float64, len(filteredIndices)),
+					Middle: make([]float64, len(filteredIndices)),
+					Lower:  make([]float64, len(filteredIndices)),
+					N:      ind.BOLL.N,
+					K:      ind.BOLL.K,
+				}
+				for i, idx := range filteredIndices {
+					filteredBOLL.Upper[i] = ind.BOLL.Upper[idx]
+					filteredBOLL.Middle[i] = ind.BOLL.Middle[idx]
+					filteredBOLL.Lower[i] = ind.BOLL.Lower[idx]
+				}
+				filteredInd.BOLL = filteredBOLL
+			}
+
+			results[idx] = screenResult{Code: c, Klines: filteredInputs, Ind: filteredInd, Signals: sigs}
 		}(i, code)
 	}
 	wg.Wait()
@@ -486,9 +575,7 @@ func runScreen(cmd *cobra.Command, args []string) error {
 
 		var sigStrs []string
 		for _, s := range r.Signals {
-			if n > 0 && s.Date.Equal(r.Klines[n-1].Time) {
-				sigStrs = append(sigStrs, fmt.Sprintf("%s%s", s.Indicator, s.Type))
-			}
+			sigStrs = append(sigStrs, fmt.Sprintf("(%s)%s%s", s.Date.Format("20060102"), s.Indicator, s.Type))
 		}
 		sigStr := strings.Join(sigStrs, ", ")
 		if sigStr == "" {

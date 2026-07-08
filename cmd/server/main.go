@@ -1671,6 +1671,8 @@ func handleScreen(c *gin.Context) {
 
 	_ = param.AutoInit()
 
+	log.Printf("[screen] Start processing %d codes, type=%s, signal=%s, startDay=%s, endDay=%s", len(codeList), ktype, signalType, startDay, endDay)
+
 	// 预先加载股票代码到名称的映射
 	// 注意：先加载SH，再加载SZ和BJ，让股票交易所的名称覆盖指数交易所（避免000001被SH的上证指数覆盖）
 	codeNameMap := make(map[string]string)
@@ -1699,170 +1701,161 @@ func handleScreen(c *gin.Context) {
 		MA      map[string][]float64 `json:"ma"`
 		MACD    *ta.MACDResult       `json:"macd,omitempty"`
 		KDJ     *ta.KDJResult        `json:"kdj,omitempty"`
+		BOLL    *ta.BOLLResult       `json:"boll,omitempty"`
+		RSI     map[string][]float64 `json:"rsi,omitempty"`
 		Signals []signal.Signal      `json:"signals"`
 		Cycles  []signal.TradeCycle  `json:"cycles"` // 完整的交易周期
 	}
 
-	results := make([]result, len(codeList))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10)
-	var mu sync.Mutex
+	// 使用串行执行，提高稳定性
+	var results []result
+	for _, code := range codeList {
+		// 从预加载的映射中获取股票名称
+		stockName := codeNameMap[code]
 
-	for i, code := range codeList {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int, c string) {
-			defer wg.Done()
-			defer func() { <-sem }()
+		s, e := getService()
+		var klines []*protocol.Kline
+		if e == nil {
+			// 使用全量历史数据来检测完整的交易周期
+			klines, e = s.FetchKlineAll(code, tdx.ParseKlineType(ktype))
+		}
+		if e != nil {
+			log.Printf("[screen] Failed to fetch klines for code: %s, error: %v", code, e)
+			continue
+		}
+		if len(klines) == 0 {
+			log.Printf("[screen] No klines for code: %s", code)
+			continue
+		}
 
-			// 从预加载的映射中获取股票名称
-			stockName := codeNameMap[c]
+		inputs := toKlineInputs(klines)
+		cat := param.DetectCategory(code)
+		cfg := param.Resolve(code, cat)
+		ind := ta.Calculate(inputs, cfg)
+		sigs := signal.Detect(code, inputs, ind, nil)
 
-			tdxMu.Lock()
-			s, e := getService()
-			var klines []*protocol.Kline
-			if e == nil {
-				// 使用全量历史数据来检测完整的交易周期
-				klines, e = s.FetchKlineAll(c, tdx.ParseKlineType(ktype))
-			}
-			tdxMu.Unlock()
-			if e != nil {
-				return
-			}
-			if len(klines) == 0 {
-				return
-			}
+		// 使用全量历史数据计算完整的交易周期
+		cycles := signal.DetectAllCycles(code, inputs, ind)
 
-			inputs := toKlineInputs(klines)
-			cat := param.DetectCategory(c)
-			cfg := param.Resolve(c, cat)
-			ind := ta.Calculate(inputs, cfg)
-			sigs := signal.Detect(c, inputs, ind, nil)
+		log.Printf("[screen] Processed code: %s, klines count: %d, inputs count: %d, signals count: %d", code, len(klines), len(inputs), len(sigs))
 
-			// 使用全量历史数据计算完整的交易周期
-			cycles := signal.DetectAllCycles(c, inputs, ind)
-
-			// 根据 startDay 和 endDay 过滤 K 线数据
-			var filteredInputs []ta.KlineInput
-			var startIdx, endIdx int = -1, -1
-			for i, k := range inputs {
-				dateStr := k.Time.Format("20060102")
-				if dateStr >= startDay && dateStr <= endDay {
-					filteredInputs = append(filteredInputs, k)
-					if startIdx == -1 {
-						startIdx = i
-					}
-					endIdx = i
+		// 根据 startDay 和 endDay 过滤 K 线数据
+		var filteredInputs []ta.KlineInput
+		var startIdx, endIdx int = -1, -1
+		for i, k := range inputs {
+			dateStr := k.Time.Format("20060102")
+			if dateStr >= startDay && dateStr <= endDay {
+				filteredInputs = append(filteredInputs, k)
+				if startIdx == -1 {
+					startIdx = i
 				}
+				endIdx = i
 			}
+		}
 
-			if len(filteredInputs) == 0 {
-				return
-			}
+		if len(filteredInputs) == 0 {
+			log.Printf("[screen] No filtered inputs for code: %s", code)
+			continue
+		}
 
-			n := len(filteredInputs)
+		n := len(filteredInputs)
 
-			// 保留指标数组：从完整计算结果中截取过滤时间段内的数据
-			maLimited := make(map[string][]float64)
-			for key, values := range ind.MA {
-				if len(values) > 0 && endIdx < len(values) && startIdx >= 0 {
-					maLimited[key] = values[startIdx : endIdx+1]
-				}
+		// 保留指标数组：从完整计算结果中截取过滤时间段内的数据
+		maLimited := make(map[string][]float64)
+		for key, values := range ind.MA {
+			if len(values) > 0 && endIdx < len(values) && startIdx >= 0 {
+				maLimited[key] = values[startIdx : endIdx+1]
 			}
-			// 保留 MACD 指标的过滤时间段内的数据
-			var macdLimited *ta.MACDResult
-			if ind.MACD != nil && endIdx < len(ind.MACD.DIF) && startIdx >= 0 {
-				macdLimited = &ta.MACDResult{
-					DIF:    ind.MACD.DIF[startIdx : endIdx+1],
-					DEA:    ind.MACD.DEA[startIdx : endIdx+1],
-					Hist:   ind.MACD.Hist[startIdx : endIdx+1],
-					Fast:   ind.MACD.Fast,
-					Slow:   ind.MACD.Slow,
-					Signal: ind.MACD.Signal,
-				}
+		}
+		// 保留 MACD 指标的过滤时间段内的数据
+		var macdLimited *ta.MACDResult
+		if ind.MACD != nil && endIdx < len(ind.MACD.DIF) && startIdx >= 0 {
+			macdLimited = &ta.MACDResult{
+				DIF:    ind.MACD.DIF[startIdx : endIdx+1],
+				DEA:    ind.MACD.DEA[startIdx : endIdx+1],
+				Hist:   ind.MACD.Hist[startIdx : endIdx+1],
+				Fast:   ind.MACD.Fast,
+				Slow:   ind.MACD.Slow,
+				Signal: ind.MACD.Signal,
 			}
-			// 保留 KDJ 指标的过滤时间段内的数据
-			var kdjLimited *ta.KDJResult
-			if ind.KDJ != nil && endIdx < len(ind.KDJ.K) && startIdx >= 0 {
-				kdjLimited = &ta.KDJResult{
-					K:  ind.KDJ.K[startIdx : endIdx+1],
-					D:  ind.KDJ.D[startIdx : endIdx+1],
-					J:  ind.KDJ.J[startIdx : endIdx+1],
-					N:  ind.KDJ.N,
-					M1: ind.KDJ.M1,
-					M2: ind.KDJ.M2,
-				}
+		}
+		// 保留 KDJ 指标的过滤时间段内的数据
+		var kdjLimited *ta.KDJResult
+		if ind.KDJ != nil && endIdx < len(ind.KDJ.K) && startIdx >= 0 {
+			kdjLimited = &ta.KDJResult{
+				K:  ind.KDJ.K[startIdx : endIdx+1],
+				D:  ind.KDJ.D[startIdx : endIdx+1],
+				J:  ind.KDJ.J[startIdx : endIdx+1],
+				N:  ind.KDJ.N,
+				M1: ind.KDJ.M1,
+				M2: ind.KDJ.M2,
 			}
-			// 过滤 Signals：只保留时间在 startDay 和 endDay 之间的信号
-			var filteredSignals []signal.Signal
-			for _, s := range sigs {
-				dateStr := s.Date.Format("20060102")
-				if dateStr >= startDay && dateStr <= endDay {
-					filteredSignals = append(filteredSignals, s)
-				}
+		}
+		// 保留 BOLL 指标的过滤时间段内的数据
+		var bollLimited *ta.BOLLResult
+		if ind.BOLL != nil && endIdx < len(ind.BOLL.Upper) && startIdx >= 0 {
+			bollLimited = &ta.BOLLResult{
+				Upper:  ind.BOLL.Upper[startIdx : endIdx+1],
+				Middle: ind.BOLL.Middle[startIdx : endIdx+1],
+				Lower:  ind.BOLL.Lower[startIdx : endIdx+1],
+				N:      ind.BOLL.N,
+				K:      ind.BOLL.K,
 			}
+		}
+		// 保留 RSI 指标的过滤时间段内的数据
+		rsiLimited := make(map[string][]float64)
+		for key, values := range ind.RSI {
+			if len(values) > 0 && endIdx < len(values) && startIdx >= 0 {
+				rsiLimited[key] = values[startIdx : endIdx+1]
+			}
+		}
+		// 过滤 Signals：只保留时间在 startDay 和 endDay 之间的信号
+		var filteredSignals []signal.Signal
+		for _, s := range sigs {
+			dateStr := s.Date.Format("20060102")
+			if dateStr >= startDay && dateStr <= endDay {
+				filteredSignals = append(filteredSignals, s)
+			}
+		}
 
-			// 过滤 Cycles：只保留时间在 startDay 和 endDay 之间的交易周期
-			var filteredCycles []signal.TradeCycle
-			for _, cycle := range cycles {
-				// 检查交易周期的买入日期或卖出日期是否在指定范围内
-				// TradeCycle 的日期格式是 "2006-01-02"，需要转换为 "20060102" 进行比较
-				buyDateStr := cycle.BuyDate[:4] + cycle.BuyDate[5:7] + cycle.BuyDate[8:10]
-				sellDateStr := cycle.SellDate[:4] + cycle.SellDate[5:7] + cycle.SellDate[8:10]
+		// 过滤 Cycles：只保留时间在 startDay 和 endDay 之间的交易周期
+		var filteredCycles []signal.TradeCycle
+		for _, cycle := range cycles {
+			// 检查交易周期的买入日期或卖出日期是否在指定范围内
+			// TradeCycle 的日期格式是 "2006-01-02"，需要转换为 "20060102" 进行比较
+			buyDateStr := cycle.BuyDate[:4] + cycle.BuyDate[5:7] + cycle.BuyDate[8:10]
+			sellDateStr := cycle.SellDate[:4] + cycle.SellDate[5:7] + cycle.SellDate[8:10]
 
-				if (buyDateStr >= startDay && buyDateStr <= endDay) ||
-					(sellDateStr >= startDay && sellDateStr <= endDay) ||
-					(buyDateStr <= startDay && sellDateStr >= endDay) {
-					filteredCycles = append(filteredCycles, cycle)
-				}
+			if (buyDateStr >= startDay && buyDateStr <= endDay) ||
+				(sellDateStr >= startDay && sellDateStr <= endDay) ||
+				(buyDateStr <= startDay && sellDateStr >= endDay) {
+				filteredCycles = append(filteredCycles, cycle)
 			}
+		}
 
-			r := result{
-				Code:    c,
-				Name:    stockName,
-				Last:    filteredInputs[n-1],
-				MA:      maLimited,
-				MACD:    macdLimited,
-				KDJ:     kdjLimited,
-				Signals: filteredSignals,
-				Cycles:  filteredCycles,
-			}
+		log.Printf("[screen] After filter code: %s, filter inputs count: %d, filter signals count: %d", code, len(filteredInputs), len(filteredSignals))
 
-			mu.Lock()
-			results[idx] = r
-			mu.Unlock()
-		}(i, code)
+		r := result{
+			Code:    code,
+			Name:    stockName,
+			Last:    filteredInputs[n-1],
+			MA:      maLimited,
+			MACD:    macdLimited,
+			KDJ:     kdjLimited,
+			BOLL:    bollLimited,
+			RSI:     rsiLimited,
+			Signals: filteredSignals,
+			Cycles:  filteredCycles,
+		}
+
+		results = append(results, r)
 	}
-	wg.Wait()
 
 	// 过滤掉没有有效数据的股票（没有代码或没有名称）
 	var validResults []result
 	for _, r := range results {
 		if r.Code != "" && r.Name != "" {
 			validResults = append(validResults, r)
-		}
-	}
-
-	// 买入信号类型
-	buySignalTypes := map[signal.SignalType]bool{
-		signal.SignalGoldenCross: true, // 金叉
-		signal.SignalOversold:    true, // 超卖
-		signal.SignalBreakLower:  true, // 跌破下轨
-		signal.SignalBullAlign:   true, // 多头排列
-	}
-
-	// 只返回当前处于买入信号状态的个股
-	var buySignalResults []result
-	for _, r := range validResults {
-		// 检查最近的信号是否是买入信号
-		if len(r.Signals) > 0 {
-			// 获取最新的信号
-			latestSignal := r.Signals[len(r.Signals)-1]
-			if buySignalTypes[latestSignal.Type] {
-				// 只保留最新的买入信号
-				r.Signals = []signal.Signal{latestSignal}
-				buySignalResults = append(buySignalResults, r)
-			}
 		}
 	}
 
@@ -1894,7 +1887,7 @@ func handleScreen(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"results": buySignalResults, "total": len(codeList), "matched": len(buySignalResults)})
+	c.JSON(http.StatusOK, gin.H{"results": validResults, "total": len(codeList), "matched": len(validResults)})
 }
 
 func handleSignalAnalysis(c *gin.Context) {
